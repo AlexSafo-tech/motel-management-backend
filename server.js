@@ -99,8 +99,8 @@ app.get('/api/status', (req, res) => {
     endpoints: {
       auth: '/api/auth',
       rooms: '/api/rooms',
-      reservations: '/api/reservations',
       customers: '/api/customers',
+      reservations: '/api/reservations',
       orders: '/api/orders',
       products: '/api/products',
       dashboard: '/api/dashboard'
@@ -111,9 +111,20 @@ app.get('/api/status', (req, res) => {
 // Importar e usar rotas
 const authRoutes = require('./routes/auth');
 const roomRoutes = require('./routes/rooms');
+const customerRoutes = require('./routes/customers');
+const reservationRoutes = require('./routes/reservations');
+const orderRoutes = require('./routes/orders');
+const productRoutes = require('./routes/products');
+const dashboardRoutes = require('./routes/dashboard');
 
+// Configurar rotas
 app.use('/api/auth', authRoutes);
 app.use('/api/rooms', roomRoutes);
+app.use('/api/customers', customerRoutes);
+app.use('/api/reservations', reservationRoutes);
+app.use('/api/orders', orderRoutes);
+app.use('/api/products', productRoutes);
+app.use('/api/dashboard', dashboardRoutes);
 
 // Middleware de tratamento de erros
 app.use((err, req, res, next) => {
@@ -139,6 +150,14 @@ app.listen(PORT, () => {
   console.log(`📡 API disponível em: http://localhost:${PORT}`);
   console.log(`🏥 Health check: http://localhost:${PORT}/health`);
   console.log(`📊 Status da API: http://localhost:${PORT}/api/status`);
+  console.log(`\n📚 Endpoints disponíveis:`);
+  console.log(`   🔐 Autenticação: http://localhost:${PORT}/api/auth`);
+  console.log(`   🏠 Quartos: http://localhost:${PORT}/api/rooms`);
+  console.log(`   👥 Clientes: http://localhost:${PORT}/api/customers`);
+  console.log(`   📅 Reservas: http://localhost:${PORT}/api/reservations`);
+  console.log(`   🍽️ Pedidos: http://localhost:${PORT}/api/orders`);
+  console.log(`   📦 Produtos: http://localhost:${PORT}/api/products`);
+  console.log(`   📊 Dashboard: http://localhost:${PORT}/api/dashboard`);
 });
 
 // Tratamento de sinais para encerramento gracioso
