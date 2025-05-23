@@ -36,7 +36,6 @@ const createInitialAdmin = async () => {
   try {
     const User = require('./models/User');
     
-    // Verificar se já existe um administrador
     const adminExists = await User.findOne({ role: 'admin' });
     
     if (!adminExists) {
@@ -66,7 +65,6 @@ const createInitialAdmin = async () => {
   }
 };
 
-// Criar admin inicial após conectar ao banco
 setTimeout(createInitialAdmin, 2000);
 
 // Rotas básicas
@@ -79,7 +77,6 @@ app.get('/', (req, res) => {
   });
 });
 
-// Rota de health check
 app.get('/health', (req, res) => {
   res.json({
     status: 'OK',
@@ -89,7 +86,6 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Rota de status da API
 app.get('/api/status', (req, res) => {
   res.json({
     api: 'Motel Management System',
@@ -98,33 +94,17 @@ app.get('/api/status', (req, res) => {
     database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
     endpoints: {
       auth: '/api/auth',
-      rooms: '/api/rooms',
-      customers: '/api/customers',
-      reservations: '/api/reservations',
-      orders: '/api/orders',
-      products: '/api/products',
-      dashboard: '/api/dashboard'
+      rooms: '/api/rooms'
     }
   });
 });
 
-// Importar e usar rotas
+// Importar apenas rotas que funcionam
 const authRoutes = require('./routes/auth');
 const roomRoutes = require('./routes/rooms');
-const customerRoutes = require('./routes/customers');
-const reservationRoutes = require('./routes/reservations');
-const orderRoutes = require('./routes/orders');
-const productRoutes = require('./routes/products');
-const dashboardRoutes = require('./routes/dashboard');
 
-// Configurar rotas
 app.use('/api/auth', authRoutes);
 app.use('/api/rooms', roomRoutes);
-app.use('/api/customers', customerRoutes);
-app.use('/api/reservations', reservationRoutes);
-app.use('/api/orders', orderRoutes);
-app.use('/api/products', productRoutes);
-app.use('/api/dashboard', dashboardRoutes);
 
 // Middleware de tratamento de erros
 app.use((err, req, res, next) => {
@@ -135,7 +115,6 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Middleware para rotas não encontradas
 app.use('*', (req, res) => {
   res.status(404).json({
     message: 'Rota não encontrada',
@@ -144,23 +123,13 @@ app.use('*', (req, res) => {
   });
 });
 
-// Iniciar servidor
 app.listen(PORT, () => {
   console.log(`🚀 Servidor rodando na porta ${PORT}`);
   console.log(`📡 API disponível em: http://localhost:${PORT}`);
   console.log(`🏥 Health check: http://localhost:${PORT}/health`);
   console.log(`📊 Status da API: http://localhost:${PORT}/api/status`);
-  console.log(`\n📚 Endpoints disponíveis:`);
-  console.log(`   🔐 Autenticação: http://localhost:${PORT}/api/auth`);
-  console.log(`   🏠 Quartos: http://localhost:${PORT}/api/rooms`);
-  console.log(`   👥 Clientes: http://localhost:${PORT}/api/customers`);
-  console.log(`   📅 Reservas: http://localhost:${PORT}/api/reservations`);
-  console.log(`   🍽️ Pedidos: http://localhost:${PORT}/api/orders`);
-  console.log(`   📦 Produtos: http://localhost:${PORT}/api/products`);
-  console.log(`   📊 Dashboard: http://localhost:${PORT}/api/dashboard`);
 });
 
-// Tratamento de sinais para encerramento gracioso
 process.on('SIGTERM', () => {
   console.log('🛑 Recebido SIGTERM, encerrando servidor...');
   mongoose.connection.close(() => {
