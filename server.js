@@ -1,4 +1,4 @@
-// server.js - Arquivo principal do servidor do sistema de gestão de motel
+// server.js - VERSÃO COMPLETA (substituir o seu server.js por este)
 
 const express = require('express');
 const mongoose = require('mongoose');
@@ -94,19 +94,33 @@ app.get('/api/status', (req, res) => {
     database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
     endpoints: {
       auth: '/api/auth',
-      rooms: '/api/rooms'
+      rooms: '/api/rooms',
+      reservations: '/api/reservations',
+      customers: '/api/customers', 
+      orders: '/api/orders',
+      products: '/api/products',
+      dashboard: '/api/dashboard'
     }
   });
 });
 
-// Importar apenas rotas que funcionam
+// ✅ IMPORTAR TODAS AS ROTAS
 const authRoutes = require('./routes/auth');
 const roomRoutes = require('./routes/rooms');
-const reservationRoutes = require('./routes/reservations'); 
+const reservationRoutes = require('./routes/reservations');  // ← ADICIONADO!
+const customerRoutes = require('./routes/customers');        // ← ADICIONADO!
+const orderRoutes = require('./routes/orders');              // ← ADICIONADO!
+const productRoutes = require('./routes/products');          // ← ADICIONADO!
+const dashboardRoutes = require('./routes/dashboard');       // ← ADICIONADO!
 
-app.use('/api/reservations', reservationRoutes);
-app.use('/api/auth', authRoutes);
-app.use('/api/rooms', roomRoutes);
+// ✅ REGISTRAR TODAS AS ROTAS
+app.use('/api/auth', authRoutes);                    // ✅ Já tinha
+app.use('/api/rooms', roomRoutes);                   // ✅ Já tinha  
+app.use('/api/reservations', reservationRoutes);     // 🆕 NOVO!
+app.use('/api/customers', customerRoutes);           // 🆕 NOVO!
+app.use('/api/orders', orderRoutes);                 // 🆕 NOVO!
+app.use('/api/products', productRoutes);             // 🆕 NOVO!
+app.use('/api/dashboard', dashboardRoutes);          // 🆕 NOVO!
 
 // Middleware de tratamento de erros
 app.use((err, req, res, next) => {
@@ -121,7 +135,16 @@ app.use('*', (req, res) => {
   res.status(404).json({
     message: 'Rota não encontrada',
     path: req.originalUrl,
-    method: req.method
+    method: req.method,
+    availableEndpoints: [
+      '/api/auth',
+      '/api/rooms', 
+      '/api/reservations',
+      '/api/customers',
+      '/api/orders',
+      '/api/products',
+      '/api/dashboard'
+    ]
   });
 });
 
@@ -130,6 +153,14 @@ app.listen(PORT, () => {
   console.log(`📡 API disponível em: http://localhost:${PORT}`);
   console.log(`🏥 Health check: http://localhost:${PORT}/health`);
   console.log(`📊 Status da API: http://localhost:${PORT}/api/status`);
+  console.log(`🎯 Endpoints disponíveis:`);
+  console.log(`   • /api/auth - Autenticação`);
+  console.log(`   • /api/rooms - Quartos`);
+  console.log(`   • /api/reservations - Reservas`);
+  console.log(`   • /api/customers - Clientes`);
+  console.log(`   • /api/orders - Pedidos`);
+  console.log(`   • /api/products - Produtos`);
+  console.log(`   • /api/dashboard - Dashboard`);
 });
 
 process.on('SIGTERM', () => {
