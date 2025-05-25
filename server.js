@@ -1,4 +1,5 @@
-// server.js - VERSÃO COMPLETA (substituir o seu server.js por este)
+// server.js - VERSÃO SEGURA PARA TESTE
+// Vamos adicionar rotas uma por uma para descobrir qual está causando erro
 
 const express = require('express');
 const mongoose = require('mongoose');
@@ -95,32 +96,76 @@ app.get('/api/status', (req, res) => {
     endpoints: {
       auth: '/api/auth',
       rooms: '/api/rooms',
-      reservations: '/api/reservations',
-      customers: '/api/customers', 
-      orders: '/api/orders',
-      products: '/api/products',
-      dashboard: '/api/dashboard'
+      reservations: '/api/reservations'
     }
   });
 });
 
-// ✅ IMPORTAR TODAS AS ROTAS
-const authRoutes = require('./routes/auth');
-const roomRoutes = require('./routes/rooms');
-const reservationRoutes = require('./routes/reservations');  // ← ADICIONADO!
-const customerRoutes = require('./routes/customers');        // ← ADICIONADO!
-const orderRoutes = require('./routes/orders');              // ← ADICIONADO!
-const productRoutes = require('./routes/products');          // ← ADICIONADO!
-const dashboardRoutes = require('./routes/dashboard');       // ← ADICIONADO!
+// ✅ IMPORTAR ROTAS UMA POR VEZ PARA TESTAR
+console.log('📋 Carregando rotas...');
 
-// ✅ REGISTRAR TODAS AS ROTAS
-app.use('/api/auth', authRoutes);                    // ✅ Já tinha
-app.use('/api/rooms', roomRoutes);                   // ✅ Já tinha  
-app.use('/api/reservations', reservationRoutes);     // 🆕 NOVO!
-app.use('/api/customers', customerRoutes);           // 🆕 NOVO!
-app.use('/api/orders', orderRoutes);                 // 🆕 NOVO!
-app.use('/api/products', productRoutes);             // 🆕 NOVO!
-app.use('/api/dashboard', dashboardRoutes);          // 🆕 NOVO!
+try {
+  const authRoutes = require('./routes/auth');
+  app.use('/api/auth', authRoutes);
+  console.log('✅ Rota auth carregada');
+} catch (error) {
+  console.error('❌ Erro ao carregar rota auth:', error.message);
+}
+
+try {
+  const roomRoutes = require('./routes/rooms');
+  app.use('/api/rooms', roomRoutes);
+  console.log('✅ Rota rooms carregada');
+} catch (error) {
+  console.error('❌ Erro ao carregar rota rooms:', error.message);
+}
+
+try {
+  const reservationRoutes = require('./routes/reservations');
+  app.use('/api/reservations', reservationRoutes);
+  console.log('✅ Rota reservations carregada');
+} catch (error) {
+  console.error('❌ Erro ao carregar rota reservations:', error.message);
+}
+
+// 🚨 COMENTEI AS OUTRAS ROTAS POR ENQUANTO
+// Vamos adicionar uma por vez depois que essas 3 funcionarem
+
+/*
+try {
+  const customerRoutes = require('./routes/customers');
+  app.use('/api/customers', customerRoutes);
+  console.log('✅ Rota customers carregada');
+} catch (error) {
+  console.error('❌ Erro ao carregar rota customers:', error.message);
+}
+
+try {
+  const orderRoutes = require('./routes/orders');
+  app.use('/api/orders', orderRoutes);
+  console.log('✅ Rota orders carregada');
+} catch (error) {
+  console.error('❌ Erro ao carregar rota orders:', error.message);
+}
+
+try {
+  const productRoutes = require('./routes/products');
+  app.use('/api/products', productRoutes);
+  console.log('✅ Rota products carregada');
+} catch (error) {
+  console.error('❌ Erro ao carregar rota products:', error.message);
+}
+
+try {
+  const dashboardRoutes = require('./routes/dashboard');
+  app.use('/api/dashboard', dashboardRoutes);
+  console.log('✅ Rota dashboard carregada');
+} catch (error) {
+  console.error('❌ Erro ao carregar rota dashboard:', error.message);
+}
+*/
+
+console.log('📋 Carregamento de rotas concluído');
 
 // Middleware de tratamento de erros
 app.use((err, req, res, next) => {
@@ -135,16 +180,7 @@ app.use('*', (req, res) => {
   res.status(404).json({
     message: 'Rota não encontrada',
     path: req.originalUrl,
-    method: req.method,
-    availableEndpoints: [
-      '/api/auth',
-      '/api/rooms', 
-      '/api/reservations',
-      '/api/customers',
-      '/api/orders',
-      '/api/products',
-      '/api/dashboard'
-    ]
+    method: req.method
   });
 });
 
@@ -153,14 +189,6 @@ app.listen(PORT, () => {
   console.log(`📡 API disponível em: http://localhost:${PORT}`);
   console.log(`🏥 Health check: http://localhost:${PORT}/health`);
   console.log(`📊 Status da API: http://localhost:${PORT}/api/status`);
-  console.log(`🎯 Endpoints disponíveis:`);
-  console.log(`   • /api/auth - Autenticação`);
-  console.log(`   • /api/rooms - Quartos`);
-  console.log(`   • /api/reservations - Reservas`);
-  console.log(`   • /api/customers - Clientes`);
-  console.log(`   • /api/orders - Pedidos`);
-  console.log(`   • /api/products - Produtos`);
-  console.log(`   • /api/dashboard - Dashboard`);
 });
 
 process.on('SIGTERM', () => {
