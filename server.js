@@ -102,7 +102,9 @@ app.get('/api/status', (req, res) => {
 // Importar apenas rotas que funcionam
 const authRoutes = require('./routes/auth');
 const roomRoutes = require('./routes/rooms');
+const reservationRoutes = require('./routes/reservations'); 
 
+app.use('/api/reservations', reservationRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/rooms', roomRoutes);
 
