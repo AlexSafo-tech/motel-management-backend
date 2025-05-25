@@ -1,5 +1,6 @@
-// server.js - VERSÃO SEGURA PARA TESTE
-// Vamos adicionar rotas uma por uma para descobrir qual está causando erro
+// server.js - ETAPA 2: Testando customers + orders
+// Já funcionam: auth, rooms, reservations
+// Testando agora: customers, orders
 
 const express = require('express');
 const mongoose = require('mongoose');
@@ -96,13 +97,15 @@ app.get('/api/status', (req, res) => {
     endpoints: {
       auth: '/api/auth',
       rooms: '/api/rooms',
-      reservations: '/api/reservations'
+      reservations: '/api/reservations',
+      customers: '/api/customers',
+      orders: '/api/orders'
     }
   });
 });
 
-// ✅ IMPORTAR ROTAS UMA POR VEZ PARA TESTAR
-console.log('📋 Carregando rotas...');
+// ✅ ROTAS QUE JÁ FUNCIONAM (Etapa 1)
+console.log('📋 Carregando rotas - Etapa 2...');
 
 try {
   const authRoutes = require('./routes/auth');
@@ -128,10 +131,7 @@ try {
   console.error('❌ Erro ao carregar rota reservations:', error.message);
 }
 
-// 🚨 COMENTEI AS OUTRAS ROTAS POR ENQUANTO
-// Vamos adicionar uma por vez depois que essas 3 funcionarem
-
-/*
+// 🆕 NOVAS ROTAS PARA TESTAR (Etapa 2)
 try {
   const customerRoutes = require('./routes/customers');
   app.use('/api/customers', customerRoutes);
@@ -148,6 +148,8 @@ try {
   console.error('❌ Erro ao carregar rota orders:', error.message);
 }
 
+// 🚨 AINDA COMENTADAS (para próxima etapa)
+/*
 try {
   const productRoutes = require('./routes/products');
   app.use('/api/products', productRoutes);
@@ -165,7 +167,7 @@ try {
 }
 */
 
-console.log('📋 Carregamento de rotas concluído');
+console.log('📋 Etapa 2 - Carregamento concluído');
 
 // Middleware de tratamento de erros
 app.use((err, req, res, next) => {
@@ -180,7 +182,14 @@ app.use('*', (req, res) => {
   res.status(404).json({
     message: 'Rota não encontrada',
     path: req.originalUrl,
-    method: req.method
+    method: req.method,
+    availableEndpoints: [
+      '/api/auth',
+      '/api/rooms', 
+      '/api/reservations',
+      '/api/customers',
+      '/api/orders'
+    ]
   });
 });
 
@@ -189,6 +198,12 @@ app.listen(PORT, () => {
   console.log(`📡 API disponível em: http://localhost:${PORT}`);
   console.log(`🏥 Health check: http://localhost:${PORT}/health`);
   console.log(`📊 Status da API: http://localhost:${PORT}/api/status`);
+  console.log(`🎯 Etapa 2 - Endpoints disponíveis:`);
+  console.log(`   • /api/auth - Autenticação ✅`);
+  console.log(`   • /api/rooms - Quartos ✅`);
+  console.log(`   • /api/reservations - Reservas ✅`);
+  console.log(`   • /api/customers - Clientes 🆕`);
+  console.log(`   • /api/orders - Pedidos 🆕`);
 });
 
 process.on('SIGTERM', () => {
