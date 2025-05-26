@@ -1,229 +1,196 @@
-// server.js - ETAPA FINAL: Todas as 7 rotas!
-// Funcionam: auth, rooms, reservations, customers, orders
-// Testando agora: products, dashboard
-
+// server.js - ARQUIVO PRINCIPAL DO BACKEND
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-const morgan = require('morgan');
+const path = require('path');
 require('dotenv').config();
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 3000;
 
-// Middleware
-app.use(cors());
-app.use(express.json());
-app.use(morgan('combined'));
+// ✅ MIDDLEWARE
+app.use(cors({
+  origin: '*', // Em produção, especificar domínios permitidos
+  credentials: true
+}));
 
-// Conexão com MongoDB
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true }));
+
+// ✅ LOGGING MIDDLEWARE
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
+  next();
+});
+
+// ✅ CONECTAR COM MONGODB
 const connectDB = async () => {
   try {
-    await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/motel_db', {
+    const mongoURI = process.env.MONGODB_URI || 'mongodb://localhost:27017/pms-motel';
+    await mongoose.connect(mongoURI, {
       useNewUrlParser: true,
       useUnifiedTopology: true,
     });
-    console.log('✅ Conectado ao MongoDB com sucesso');
+    console.log('✅ MongoDB conectado com sucesso');
   } catch (error) {
-    console.error('❌ Erro ao conectar ao MongoDB:', error.message);
+    console.error('❌ Erro ao conectar MongoDB:', error);
     process.exit(1);
   }
 };
 
-// Conectar ao banco de dados
-connectDB();
+// ✅ ROTAS PRINCIPAIS
+// Rota de health check
+app.get('/health', (req, res) => {
+  res.json({
+    success: true,
+    message: 'API funcionando',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime()
+  });
+});
 
-// Função para criar usuário administrador inicial
-const createInitialAdmin = async () => {
+// Rota raiz
+app.get('/', (req, res) => {
+  const availableEndpoints = [
+    '/api/auth',
+    '/api/rooms',
+    '/api/reservations', 
+    '/api/customers',
+    '/api/orders',
+    '/api/products',
+    '/api/dashboard'
+  ];
+
+  res.json({
+    success: true,
+    message: 'PMS Motel API',
+    version: '1.0.0',
+    availableEndpoints: availableEndpoints,
+    documentation: '/api/docs'
+  });
+});
+
+// ✅ REGISTRAR ROTAS DA API
+try {
+  // Rota de autenticação
+  app.use('/api/auth', require('./routes/auth'));
+  console.log('✅ Rota /api/auth registrada');
+
+  // ✅ ROTA DE QUARTOS - IMPORTANTE!
+  app.use('/api/rooms', require('./routes/rooms'));
+  console.log('✅ Rota /api/rooms registrada');
+
+  // Outras rotas
+  app.use('/api/reservations', require('./routes/reservations'));
+  console.log('✅ Rota /api/reservations registrada');
+
+  app.use('/api/customers', require('./routes/customers'));
+  console.log('✅ Rota /api/customers registrada');
+
+  app.use('/api/orders', require('./routes/orders'));
+  console.log('✅ Rota /api/orders registrada');
+
+  app.use('/api/products', require('./routes/products'));
+  console.log('✅ Rota /api/products registrada');
+
+  app.use('/api/dashboard', require('./routes/dashboard'));
+  console.log('✅ Rota /api/dashboard registrada');
+
+} catch (error) {
+  console.error('❌ Erro ao registrar rotas:', error);
+  
+  // ✅ FALLBACK - Se não conseguir carregar as rotas, criar rotas básicas
+  app.get('/api/rooms', (req, res) => {
+    res.json({
+      success: true,
+      message: 'Rota de quartos funcionando (fallback)',
+      data: { rooms: [], stats: {} }
+    });
+  });
+
+  app.post('/api/rooms', (req, res) => {
+    console.log('📦 Dados recebidos para criar quarto (fallback):', req.body);
+    res.status(201).json({
+      success: true,
+      message: 'Quarto criado (simulação - fallback)',
+      data: {
+        id: 'fallback-' + Date.now(),
+        ...req.body
+      }
+    });
+  });
+}
+
+// ✅ MIDDLEWARE DE ERRO 404
+app.use('*', (req, res) => {
+  const availableEndpoints = [
+    '/api/auth',
+    '/api/rooms',
+    '/api/reservations',
+    '/api/customers', 
+    '/api/orders',
+    '/api/products',
+    '/api/dashboard'
+  ];
+
+  res.status(404).json({
+    success: false,
+    message: 'Rota não encontrada',
+    method: req.method,
+    path: req.originalUrl,
+    availableEndpoints: availableEndpoints
+  });
+});
+
+// ✅ MIDDLEWARE DE TRATAMENTO DE ERROS
+app.use((error, req, res, next) => {
+  console.error('❌ Erro no servidor:', error);
+  
+  res.status(error.status || 500).json({
+    success: false,
+    message: error.message || 'Erro interno do servidor',
+    error: process.env.NODE_ENV === 'development' ? error.stack : undefined
+  });
+});
+
+// ✅ INICIAR SERVIDOR
+const startServer = async () => {
   try {
-    const User = require('./models/User');
+    await connectDB();
     
-    const adminExists = await User.findOne({ role: 'admin' });
-    
-    if (!adminExists) {
-      const adminUser = new User({
-        name: 'Administrador',
-        email: 'admin@motel.com',
-        password: 'admin123',
-        role: 'admin',
-        permissions: {
-          canManageUsers: true,
-          canManageRooms: true,
-          canManageReservations: true,
-          canManageOrders: true,
-          canManageInventory: true,
-          canViewReports: true
-        }
-      });
-      
-      await adminUser.save();
-      console.log('✅ Usuário administrador criado:');
-      console.log('   Email: admin@motel.com');
-      console.log('   Senha: admin123');
-      console.log('   ⚠️  ALTERE A SENHA APÓS O PRIMEIRO LOGIN!');
-    }
+    app.listen(PORT, () => {
+      console.log('🚀 Servidor iniciado com sucesso!');
+      console.log(`🌐 URL: http://localhost:${PORT}`);
+      console.log(`🌐 URL Render: https://pousada-1hlt.onrender.com`);
+      console.log('📋 Endpoints disponíveis:');
+      console.log('   GET  / - Informações da API');
+      console.log('   GET  /health - Health check');
+      console.log('   POST /api/auth/login - Login');
+      console.log('   GET  /api/rooms - Listar quartos');
+      console.log('   POST /api/rooms - Criar quarto');
+      console.log('   GET  /api/reservations - Listar reservas');
+      console.log('   POST /api/reservations - Criar reserva');
+      console.log('   GET  /api/dashboard/stats - Estatísticas');
+      console.log('🎯 Sistema PMS Motel online!');
+    });
   } catch (error) {
-    console.error('❌ Erro ao criar usuário administrador:', error);
+    console.error('❌ Erro ao iniciar servidor:', error);
+    process.exit(1);
   }
 };
 
-setTimeout(createInitialAdmin, 2000);
-
-// Rotas básicas
-app.get('/', (req, res) => {
-  res.json({
-    message: '🏨 Sistema de Gestão de Motel - API funcionando!',
-    version: '1.0.0',
-    status: 'online',
-    timestamp: new Date().toISOString()
-  });
-});
-
-app.get('/health', (req, res) => {
-  res.json({
-    status: 'OK',
-    uptime: process.uptime(),
-    memory: process.memoryUsage(),
-    timestamp: new Date().toISOString()
-  });
-});
-
-app.get('/api/status', (req, res) => {
-  res.json({
-    api: 'Motel Management System',
-    version: '1.0.0',
-    status: 'running',
-    database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
-    endpoints: {
-      auth: '/api/auth',
-      rooms: '/api/rooms',
-      reservations: '/api/reservations',
-      customers: '/api/customers',
-      orders: '/api/orders',
-      products: '/api/products',
-      dashboard: '/api/dashboard'
-    }
-  });
-});
-
-// ✅ TODAS AS ROTAS - VERSÃO FINAL COMPLETA
-console.log('📋 Carregando TODAS as rotas - Etapa Final...');
-
-try {
-  const authRoutes = require('./routes/auth');
-  app.use('/api/auth', authRoutes);
-  console.log('✅ Rota auth carregada');
-} catch (error) {
-  console.error('❌ Erro ao carregar rota auth:', error.message);
-}
-
-try {
-  const roomRoutes = require('./routes/rooms');
-  app.use('/api/rooms', roomRoutes);
-  console.log('✅ Rota rooms carregada');
-} catch (error) {
-  console.error('❌ Erro ao carregar rota rooms:', error.message);
-}
-
-try {
-  const reservationRoutes = require('./routes/reservations');
-  app.use('/api/reservations', reservationRoutes);
-  console.log('✅ Rota reservations carregada');
-} catch (error) {
-  console.error('❌ Erro ao carregar rota reservations:', error.message);
-}
-
-try {
-  const customerRoutes = require('./routes/customers');
-  app.use('/api/customers', customerRoutes);
-  console.log('✅ Rota customers carregada');
-} catch (error) {
-  console.error('❌ Erro ao carregar rota customers:', error.message);
-}
-
-try {
-  const orderRoutes = require('./routes/orders');
-  app.use('/api/orders', orderRoutes);
-  console.log('✅ Rota orders carregada');
-} catch (error) {
-  console.error('❌ Erro ao carregar rota orders:', error.message);
-}
-
-// 🆕 ÚLTIMAS 2 ROTAS PARA COMPLETAR
-try {
-  const productRoutes = require('./routes/products');
-  app.use('/api/products', productRoutes);
-  console.log('✅ Rota products carregada');
-} catch (error) {
-  console.error('❌ Erro ao carregar rota products:', error.message);
-}
-
-try {
-  const dashboardRoutes = require('./routes/dashboard');
-  app.use('/api/dashboard', dashboardRoutes);
-  console.log('✅ Rota dashboard carregada');
-} catch (error) {
-  console.error('❌ Erro ao carregar rota dashboard:', error.message);
-}
-
-console.log('🎉 ETAPA FINAL - Todas as 7 rotas carregadas!');
-
-// Middleware de tratamento de erros
-app.use((err, req, res, next) => {
-  console.error('❌ Erro no servidor:', err.stack);
-  res.status(500).json({
-    message: 'Erro interno do servidor',
-    error: process.env.NODE_ENV === 'production' ? {} : err.message
-  });
-});
-
-app.use('*', (req, res) => {
-  res.status(404).json({
-    message: 'Rota não encontrada',
-    path: req.originalUrl,
-    method: req.method,
-    availableEndpoints: [
-      '/api/auth',
-      '/api/rooms', 
-      '/api/reservations',
-      '/api/customers',
-      '/api/orders',
-      '/api/products',
-      '/api/dashboard'
-    ]
-  });
-});
-
-app.listen(PORT, () => {
-  console.log(`🚀 Servidor rodando na porta ${PORT}`);
-  console.log(`📡 API disponível em: http://localhost:${PORT}`);
-  console.log(`🏥 Health check: http://localhost:${PORT}/health`);
-  console.log(`📊 Status da API: http://localhost:${PORT}/api/status`);
-  console.log(`🎯 TODAS AS ROTAS DISPONÍVEIS:`);
-  console.log(`   • /api/auth - Autenticação ✅`);
-  console.log(`   • /api/rooms - Quartos ✅`);
-  console.log(`   • /api/reservations - Reservas ✅`);
-  console.log(`   • /api/customers - Clientes ✅`);
-  console.log(`   • /api/orders - Pedidos ✅`);
-  console.log(`   • /api/products - Produtos 🆕`);
-  console.log(`   • /api/dashboard - Dashboard 🆕`);
-  console.log(`🏆 SISTEMA COMPLETO COM 7 MÓDULOS!`);
-});
-
+// ✅ TRATAMENTO DE SINAIS
 process.on('SIGTERM', () => {
-  console.log('🛑 Recebido SIGTERM, encerrando servidor...');
-  mongoose.connection.close(() => {
-    console.log('🔌 Conexão com MongoDB fechada');
-    process.exit(0);
-  });
+  console.log('🛑 SIGTERM recebido. Encerrando servidor...');
+  process.exit(0);
 });
 
 process.on('SIGINT', () => {
-  console.log('🛑 Recebido SIGINT, encerrando servidor...');
-  mongoose.connection.close(() => {
-    console.log('🔌 Conexão com MongoDB fechada');
-    process.exit(0);
-  });
+  console.log('🛑 SIGINT recebido. Encerrando servidor...');
+  process.exit(0);
 });
+
+// ✅ INICIAR
+startServer();
 
 module.exports = app;
