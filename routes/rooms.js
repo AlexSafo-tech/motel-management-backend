@@ -81,6 +81,11 @@ const roomSchema = new mongoose.Schema({
   lastMaintenance: {
     type: Date,
     default: Date.now
+  },
+  maintenanceReason: {
+    type: String,
+    trim: true,
+    maxlength: 100
   }
 }, {
   timestamps: true
@@ -335,13 +340,50 @@ router.delete('/:id', authMiddleware, async (req, res) => {
   }
 });
 
-// ✅ ROTA PATCH - ATUALIZAR STATUS DO QUARTO
+// ✅ ROTA PATCH - ATUALIZAR QUARTO COMPLETO (INCLUINDO STATUS E MOTIVO)
+router.patch('/:id', authMiddleware, async (req, res) => {
+  try {
+    console.log(`🔄 PATCH /api/rooms/${req.params.id}`);
+    console.log('📦 Dados para atualizar:', req.body);
+    
+    const room = await Room.findByIdAndUpdate(
+      req.params.id,
+      req.body,
+      { new: true, runValidators: true }
+    );
+    
+    if (!room) {
+      return res.status(404).json({
+        success: false,
+        message: 'Quarto não encontrado'
+      });
+    }
+    
+    console.log('✅ Quarto atualizado:', room._id);
+    
+    res.json({
+      success: true,
+      message: 'Quarto atualizado com sucesso',
+      data: room
+    });
+    
+  } catch (error) {
+    console.error('❌ Erro ao atualizar quarto:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erro ao atualizar quarto',
+      error: error.message
+    });
+  }
+});
+
+// ✅ ROTA PATCH - ATUALIZAR STATUS DO QUARTO (ESPECÍFICA)
 router.patch('/:id/status', authMiddleware, async (req, res) => {
   try {
     console.log(`🔄 PATCH /api/rooms/${req.params.id}/status`);
     console.log('📦 Novo status:', req.body.status);
     
-    const { status } = req.body;
+    const { status, maintenanceReason } = req.body;
     
     if (!['available', 'occupied', 'maintenance', 'cleaning'].includes(status)) {
       return res.status(400).json({
@@ -350,9 +392,21 @@ router.patch('/:id/status', authMiddleware, async (req, res) => {
       });
     }
     
+    const updateData = { status };
+    
+    // Se for manutenção e tiver motivo, adicionar
+    if (status === 'maintenance' && maintenanceReason) {
+      updateData.maintenanceReason = maintenanceReason;
+    }
+    
+    // Se não for manutenção, remover motivo anterior
+    if (status !== 'maintenance') {
+      updateData.$unset = { maintenanceReason: 1 };
+    }
+    
     const room = await Room.findByIdAndUpdate(
       req.params.id,
-      { status },
+      updateData,
       { new: true, runValidators: true }
     );
     
