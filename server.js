@@ -1,6 +1,6 @@
-// server.js - ETAPA 2: Testando customers + orders
-// Já funcionam: auth, rooms, reservations
-// Testando agora: customers, orders
+// server.js - ETAPA FINAL: Todas as 7 rotas!
+// Funcionam: auth, rooms, reservations, customers, orders
+// Testando agora: products, dashboard
 
 const express = require('express');
 const mongoose = require('mongoose');
@@ -99,13 +99,15 @@ app.get('/api/status', (req, res) => {
       rooms: '/api/rooms',
       reservations: '/api/reservations',
       customers: '/api/customers',
-      orders: '/api/orders'
+      orders: '/api/orders',
+      products: '/api/products',
+      dashboard: '/api/dashboard'
     }
   });
 });
 
-// ✅ ROTAS QUE JÁ FUNCIONAM (Etapa 1)
-console.log('📋 Carregando rotas - Etapa 2...');
+// ✅ TODAS AS ROTAS - VERSÃO FINAL COMPLETA
+console.log('📋 Carregando TODAS as rotas - Etapa Final...');
 
 try {
   const authRoutes = require('./routes/auth');
@@ -131,7 +133,6 @@ try {
   console.error('❌ Erro ao carregar rota reservations:', error.message);
 }
 
-// 🆕 NOVAS ROTAS PARA TESTAR (Etapa 2)
 try {
   const customerRoutes = require('./routes/customers');
   app.use('/api/customers', customerRoutes);
@@ -148,8 +149,7 @@ try {
   console.error('❌ Erro ao carregar rota orders:', error.message);
 }
 
-// 🚨 AINDA COMENTADAS (para próxima etapa)
-/*
+// 🆕 ÚLTIMAS 2 ROTAS PARA COMPLETAR
 try {
   const productRoutes = require('./routes/products');
   app.use('/api/products', productRoutes);
@@ -165,9 +165,8 @@ try {
 } catch (error) {
   console.error('❌ Erro ao carregar rota dashboard:', error.message);
 }
-*/
 
-console.log('📋 Etapa 2 - Carregamento concluído');
+console.log('🎉 ETAPA FINAL - Todas as 7 rotas carregadas!');
 
 // Middleware de tratamento de erros
 app.use((err, req, res, next) => {
@@ -188,7 +187,9 @@ app.use('*', (req, res) => {
       '/api/rooms', 
       '/api/reservations',
       '/api/customers',
-      '/api/orders'
+      '/api/orders',
+      '/api/products',
+      '/api/dashboard'
     ]
   });
 });
@@ -198,12 +199,15 @@ app.listen(PORT, () => {
   console.log(`📡 API disponível em: http://localhost:${PORT}`);
   console.log(`🏥 Health check: http://localhost:${PORT}/health`);
   console.log(`📊 Status da API: http://localhost:${PORT}/api/status`);
-  console.log(`🎯 Etapa 2 - Endpoints disponíveis:`);
+  console.log(`🎯 TODAS AS ROTAS DISPONÍVEIS:`);
   console.log(`   • /api/auth - Autenticação ✅`);
   console.log(`   • /api/rooms - Quartos ✅`);
   console.log(`   • /api/reservations - Reservas ✅`);
-  console.log(`   • /api/customers - Clientes 🆕`);
-  console.log(`   • /api/orders - Pedidos 🆕`);
+  console.log(`   • /api/customers - Clientes ✅`);
+  console.log(`   • /api/orders - Pedidos ✅`);
+  console.log(`   • /api/products - Produtos 🆕`);
+  console.log(`   • /api/dashboard - Dashboard 🆕`);
+  console.log(`🏆 SISTEMA COMPLETO COM 7 MÓDULOS!`);
 });
 
 process.on('SIGTERM', () => {
