@@ -250,6 +250,5 @@ roomSchema.index({ floor: 1, status: 1 });
 roomSchema.index({ type: 1, status: 1 });
 roomSchema.index({ number: 1 }, { unique: true });
 
-const Room = mongoose.model('Room', roomSchema);
-
-module.exports = Room;
+// ✅ CORREÇÃO DO ERRO: Evita sobrescrever modelo já compilado
+module.exports = mongoose.models.Room || mongoose.model('Room', roomSchema);
