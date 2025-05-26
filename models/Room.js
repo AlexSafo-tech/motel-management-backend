@@ -1,141 +1,255 @@
-// models/Room.js - Modelo de quarto do motel
-
+// backend/models/Room.js - MODELO MELHORADO PARA MOTEL
 const mongoose = require('mongoose');
 
+// ✅ SCHEMA FLEXÍVEL E COMPLETO
 const roomSchema = new mongoose.Schema({
+  // ✅ CAMPOS OBRIGATÓRIOS
   number: {
     type: String,
     required: [true, 'Número do quarto é obrigatório'],
     unique: true,
-    trim: true
+    trim: true,
+    validate: {
+      validator: function(v) {
+        return /^[0-9]{3}$/.test(v); // 3 dígitos: 101, 201, etc.
+      },
+      message: 'Número deve ter 3 dígitos (ex: 101, 201)'
+    }
   },
+
   type: {
     type: String,
     required: [true, 'Tipo do quarto é obrigatório'],
-    enum: ['Standard', 'Premium', 'Suite', 'Luxo'],
-    default: 'Standard'
+    enum: {
+      values: ['standard', 'premium', 'suite', 'luxo'],
+      message: 'Tipo deve ser: standard, premium, suite ou luxo'
+    },
+    default: 'standard',
+    lowercase: true
   },
-  category: {
+
+  status: {
     type: String,
-    enum: ['Simples', 'Casal', 'Família', 'VIP'],
-    default: 'Casal'
+    required: [true, 'Status é obrigatório'],
+    enum: {
+      values: ['available', 'occupied', 'maintenance', 'cleaning'],
+      message: 'Status deve ser: available, occupied, maintenance ou cleaning'
+    },
+    default: 'available'
   },
+
+  // ✅ CAMPOS OPCIONAIS COM DEFAULTS
   capacity: {
     type: Number,
     required: [true, 'Capacidade é obrigatória'],
-    min: 1,
-    max: 6,
+    min: [1, 'Capacidade mínima é 1'],
+    max: [10, 'Capacidade máxima é 10'],
     default: 2
   },
-  amenities: [{
-    type: String,
-    enum: [
-      'TV', 'Ar Condicionado', 'Frigobar', 'Hidromassagem', 
-      'Espelhos', 'Som Ambiente', 'WiFi', 'Garagem Privativa',
-      'Decoração Temática', 'Pole Dance', 'Ducha', 'Sauna'
-    ]
-  }],
-  pricing: {
-    hourly: {
-      type: Number,
-      required: true,
-      min: 0
-    },
-    period4h: {
-      type: Number,
-      required: true,
-      min: 0
-    },
-    period12h: {
-      type: Number,
-      required: true,
-      min: 0
-    },
-    daily: {
-      type: Number,
-      required: true,
-      min: 0
-    }
-  },
-  status: {
-    type: String,
-    enum: ['available', 'occupied', 'cleaning', 'maintenance', 'out_of_order'],
-    default: 'available'
-  },
+
   floor: {
-    type: Number,
-    min: 0,
-    default: 1
-  },
-  description: {
     type: String,
-    trim: true
-  },
-  images: [{
-    type: String,
+    required: [true, 'Andar é obrigatório'],
     validate: {
       validator: function(v) {
-        return /^https?:\/\/.+\.(jpg|jpeg|png|gif|webp)$/i.test(v);
+        return /^[1-9]$/.test(v); // 1 dígito: 1, 2, 3, etc.
       },
-      message: 'URL da imagem deve ser válida'
+      message: 'Andar deve ser um número de 1 a 9'
     }
-  }],
-  lastCleaned: {
-    type: Date
   },
-  lastMaintenance: {
-    type: Date
+
+  // ✅ PREÇOS POR PERÍODO - FLEXÍVEL
+  prices: {
+    type: {
+      '4h': {
+        type: Number,
+        required: [true, 'Preço 4h é obrigatório'],
+        min: [0, 'Preço não pode ser negativo'],
+        default: 50.00
+      },
+      '6h': {
+        type: Number,
+        required: [true, 'Preço 6h é obrigatório'],
+        min: [0, 'Preço não pode ser negativo'],
+        default: 70.00
+      },
+      '12h': {
+        type: Number,
+        required: [true, 'Preço 12h é obrigatório'],
+        min: [0, 'Preço não pode ser negativo'],
+        default: 100.00
+      },
+      'daily': {
+        type: Number,
+        required: [true, 'Preço diária é obrigatório'],
+        min: [0, 'Preço não pode ser negativo'],
+        default: 150.00
+      }
+    },
+    required: [true, 'Preços são obrigatórios'],
+    default: () => ({
+      '4h': 50.00,
+      '6h': 70.00,
+      '12h': 100.00,
+      'daily': 150.00
+    })
   },
+
+  // ✅ CAMPOS DESCRITIVOS
+  description: {
+    type: String,
+    trim: true,
+    maxlength: [500, 'Descrição não pode ter mais de 500 caracteres'],
+    default: function() {
+      return `Quarto ${this.number} - ${this.type}`;
+    }
+  },
+
+  amenities: {
+    type: [String],
+    default: ['wifi', 'ar_condicionado', 'tv'],
+    validate: {
+      validator: function(amenities) {
+        // Amenidades válidas
+        const validAmenities = [
+          'wifi', 'ar_condicionado', 'tv', 'frigobar', 'cofre', 
+          'banheira', 'varanda', 'cama_king', 'cama_queen', 
+          'mesa', 'cadeira', 'espelho', 'secador'
+        ];
+        return amenities.every(amenity => validAmenities.includes(amenity));
+      },
+      message: 'Amenidade inválida detectada'
+    }
+  },
+
+  // ✅ CAMPOS DE CONTROLE
   isActive: {
     type: Boolean,
     default: true
   },
-  notes: {
-    type: String,
-    trim: true
+
+  // ✅ CAMPOS DE AUDITORIA
+  createdAt: {
+    type: Date,
+    default: Date.now
+  },
+
+  updatedAt: {
+    type: Date,
+    default: Date.now
+  },
+
+  createdBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  },
+
+  updatedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
   }
 }, {
-  timestamps: true
-});
+  // ✅ OPÇÕES DO SCHEMA
+  timestamps: true, // Adiciona createdAt e updatedAt automaticamente
+  
+  // ✅ TRANSFORMAÇÃO DO JSON
+  toJSON: {
+    transform: function(doc, ret) {
+      ret.id = ret._id;
+      delete ret._id;
+      delete ret.__v;
+      return ret;
+    }
+  },
 
-// Índices para melhor performance
-roomSchema.index({ number: 1 });
-roomSchema.index({ status: 1 });
-roomSchema.index({ type: 1 });
-roomSchema.index({ isActive: 1 });
-
-// Método virtual para verificar se o quarto está disponível
-roomSchema.virtual('isAvailable').get(function() {
-  return this.status === 'available' && this.isActive;
-});
-
-// Método para calcular preço baseado no período
-roomSchema.methods.calculatePrice = function(periodType, hours = 1) {
-  switch(periodType) {
-    case 'hourly':
-      return this.pricing.hourly * hours;
-    case '4h':
-      return this.pricing.period4h;
-    case '12h':
-      return this.pricing.period12h;
-    case 'daily':
-      return this.pricing.daily;
-    default:
-      return this.pricing.hourly;
+  // ✅ ÍNDICES PARA PERFORMANCE
+  index: {
+    number: 1,
+    floor: 1,
+    status: 1,
+    type: 1
   }
-};
+});
 
-// Middleware para atualizar timestamp quando status muda
+// ✅ MIDDLEWARE PRE-SAVE
 roomSchema.pre('save', function(next) {
-  if (this.isModified('status')) {
-    if (this.status === 'cleaning') {
-      this.lastCleaned = new Date();
-    }
-    if (this.status === 'maintenance') {
-      this.lastMaintenance = new Date();
-    }
+  // Garantir que o andar seja inferido do número se não fornecido
+  if (!this.floor && this.number) {
+    this.floor = this.number.charAt(0);
   }
+
+  // Atualizar timestamp
+  this.updatedAt = new Date();
+  
   next();
 });
 
-module.exports = mongoose.model('Room', roomSchema);
+// ✅ MÉTODOS DE INSTÂNCIA
+roomSchema.methods.isAvailable = function() {
+  return this.status === 'available';
+};
+
+roomSchema.methods.getPriceForPeriod = function(period) {
+  return this.prices[period] || this.prices['4h'];
+};
+
+roomSchema.methods.getFloorName = function() {
+  const floorNames = {
+    '1': '1º Andar',
+    '2': '2º Andar', 
+    '3': '3º Andar'
+  };
+  return floorNames[this.floor] || `${this.floor}º Andar`;
+};
+
+// ✅ MÉTODOS ESTÁTICOS
+roomSchema.statics.findByFloor = function(floor) {
+  return this.find({ floor: floor.toString() });
+};
+
+roomSchema.statics.findAvailable = function() {
+  return this.find({ status: 'available', isActive: true });
+};
+
+roomSchema.statics.getStats = async function() {
+  const stats = await this.aggregate([
+    {
+      $group: {
+        _id: null,
+        total: { $sum: 1 },
+        available: {
+          $sum: {
+            $cond: [{ $eq: ['$status', 'available'] }, 1, 0]
+          }
+        },
+        occupied: {
+          $sum: {
+            $cond: [{ $eq: ['$status', 'occupied'] }, 1, 0]
+          }
+        },
+        byFloor: {
+          $push: {
+            floor: '$floor',
+            count: 1
+          }
+        }
+      }
+    }
+  ]);
+
+  return stats[0] || {
+    total: 0,
+    available: 0,
+    occupied: 0,
+    byFloor: []
+  };
+};
+
+// ✅ ÍNDICES COMPOSTOS PARA QUERIES FREQUENTES
+roomSchema.index({ floor: 1, status: 1 });
+roomSchema.index({ type: 1, status: 1 });
+roomSchema.index({ number: 1 }, { unique: true });
+
+const Room = mongoose.model('Room', roomSchema);
+
+module.exports = Room;
