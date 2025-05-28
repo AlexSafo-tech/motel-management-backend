@@ -76,6 +76,10 @@ try {
   app.use('/api/auth', require('./routes/auth'));
   console.log('✅ Rota /api/auth registrada');
 
+  // ✅ ROTA DE USUÁRIOS - IMPORTANTE!
+app.use('/api/users', require('./routes/users'));
+console.log('✅ Rota /api/users registrada');
+
   // ✅ ROTA DE QUARTOS - IMPORTANTE!
   app.use('/api/rooms', require('./routes/rooms'));
   console.log('✅ Rota /api/rooms registrada');
