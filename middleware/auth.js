@@ -1,4 +1,4 @@
-// middleware/auth.js - CORRIGIDO para exportar todas as funções corretamente
+// middleware/auth.js - Middleware de autenticação e autorização
 
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
@@ -39,7 +39,7 @@ const authenticate = async (req, res, next) => {
     req.user = user;
     next();
   } catch (error) {
-    console.error('Erro no middleware de autenticação:', error.message); // Logar a mensagem de erro específica
+    console.error('Erro no middleware de autenticação:', error);
     
     if (error.name === 'JsonWebTokenError') {
       return res.status(401).json({
@@ -68,7 +68,7 @@ const authorize = (...roles) => {
     if (!req.user) {
       return res.status(401).json({
         success: false,
-        message: 'Usuário não autenticado para autorização.' // Mensagem mais clara
+        message: 'Usuário não autenticado.'
       });
     }
 
@@ -91,7 +91,7 @@ const checkPermission = (permission) => {
     if (!req.user) {
       return res.status(401).json({
         success: false,
-        message: 'Usuário não autenticado para verificação de permissão.' // Mensagem mais clara
+        message: 'Usuário não autenticado.'
       });
     }
 
@@ -100,13 +100,13 @@ const checkPermission = (permission) => {
       return next();
     }
 
-    // Esta lógica assume que `req.user.permissions` é um array de strings de permissão
-    // ou um objeto onde as chaves são as permissões. Ajuste conforme sua estrutura.
-    // A função getPermissions do seu `routes/auth.js` precisaria popular `req.user.permissions`
-    // ou ser chamada aqui. Para este exemplo, vamos supor que `req.user.permissions` é um array.
-    // Se `user.permissions` vem do modelo User e é um array:
-    // if (!req.user.permissions || !req.user.permissions.includes(permission)) {
-    // Se `user.permissions` é um objeto { permissao: true }:
+    // Verificar se o usuário tem a permissão específica
+    // Esta lógica assume que req.user.permissions é um objeto como { 'nomeDaPermissao': true }
+    // ou que você tem uma função getPermissions(user.role) que retorna um array ou objeto.
+    // Se `req.user.permissions` não está populado com as permissões do usuário vindas do BD ou de uma definição de role,
+    // esta verificação pode não funcionar como esperado. No seu `routes/auth.js`, `getPermissions` é chamado,
+    // mas o resultado não parece ser anexado a `req.user` diretamente no middleware `authenticate`.
+    // Isso pode ser um ponto de atenção para a lógica de `checkPermission`.
     if (!req.user.permissions || !req.user.permissions[permission]) {
       return res.status(403).json({
         success: false,
@@ -124,16 +124,19 @@ const checkOwnershipOrAdmin = (req, res, next) => {
   if (!req.user) {
     return res.status(401).json({
       success: false,
-      message: 'Usuário não autenticado para verificação de propriedade.' // Mensagem mais clara
+      message: 'Usuário não autenticado.'
     });
   }
 
   const targetUserId = req.params.userId || req.params.id;
   
+  // Admin pode acessar qualquer usuário
   if (req.user.role === 'admin') {
     return next();
   }
 
+  // Usuário pode acessar apenas seus próprios dados
+  // req.user._id vem do token/DB, targetUserId vem dos parâmetros da rota
   if (req.user._id && req.user._id.toString() === targetUserId) {
     return next();
   }
@@ -157,12 +160,11 @@ const optionalAuth = async (req, res, next) => {
         req.user = user;
       }
     }
+
     next();
   } catch (error) {
-    // Em autenticação opcional, erros de token (expirado, inválido) não param a requisição.
-    // O usuário simplesmente não é definido em req.user.
-    // Pode ser útil logar o erro para debug, mas não enviar resposta de erro.
-    // console.warn('Erro em optionalAuth (ignorado):', error.message);
+    // Ignorar erros de token em autenticação opcional (ex: token expirado ou inválido)
+    // O usuário simplesmente não será autenticado, mas a requisição continua.
     next();
   }
 };
@@ -172,27 +174,31 @@ const rateLimitByUser = (maxRequests = 100, windowMs = 15 * 60 * 1000) => {
   const requests = new Map();
 
   return (req, res, next) => {
-    const userId = req.user?._id?.toString() || req.ip;
+    const userId = req.user?._id?.toString() || req.ip; // Usa userId se autenticado, senão IP
     const now = Date.now();
     
+    // Inicializa o array de timestamps de requisição para o usuário, se não existir
     if (!requests.has(userId)) {
       requests.set(userId, []);
     }
 
     const userTimestamps = requests.get(userId);
+    
+    // Remove timestamps que estão fora da janela de tempo
     const windowStart = now - windowMs;
     const recentTimestamps = userTimestamps.filter(time => time > windowStart);
     requests.set(userId, recentTimestamps);
 
     if (recentTimestamps.length >= maxRequests) {
+      // Calcula o tempo para a próxima tentativa (aproximado)
       const oldestRequestInWindow = recentTimestamps.length > 0 ? recentTimestamps[0] : now;
-      const retryAfterSeconds = Math.max(0, Math.ceil((oldestRequestInWindow + windowMs - now) / 1000)); // Garante não ser negativo
+      const retryAfterSeconds = Math.ceil((oldestRequestInWindow + windowMs - now) / 1000);
       
       res.setHeader('Retry-After', retryAfterSeconds);
       return res.status(429).json({
         success: false,
         message: 'Muitas requisições. Tente novamente em alguns minutos.',
-        retryAfter: retryAfterSeconds
+        retryAfter: retryAfterSeconds // Informa o cliente em segundos
       });
     }
 
@@ -202,34 +208,39 @@ const rateLimitByUser = (maxRequests = 100, windowMs = 15 * 60 * 1000) => {
 };
 
 // Utilitário para gerar token JWT
-const generateToken = (userId, email, role) => {
+const generateToken = (userId, email, role) => { // Adicionado email e role para um payload mais rico
   return jwt.sign(
-    { id: userId, email, role },
+    { id: userId, email, role }, // Payload do token
     process.env.JWT_SECRET,
-    { expiresIn: '24h' }
+    { expiresIn: '24h' } // Tempo de expiração do token
   );
 };
 
 // Utilitário para gerar refresh token (válido por mais tempo)
 const generateRefreshToken = (userId) => {
   return jwt.sign(
-    { id: userId, type: 'refresh' },
-    process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET, // Use um segredo dedicado se possível
-    { expiresIn: '7d' }
+    { id: userId, type: 'refresh' }, // type: 'refresh' para distinguir de access tokens
+    process.env.JWT_REFRESH_SECRET, // Idealmente, usar um segredo diferente para refresh tokens
+    { expiresIn: '7d' } // Tempo de expiração maior para refresh tokens
   );
 };
 
-// --- BLOCO DE EXPORTAÇÃO CORRIGIDO ---
+/* // Bloco de exportação original que será substituído:
+module.exports = {
+  authenticate,
+  authorize,
+  checkPermission,
+  checkOwnershipOrAdmin,
+  optionalAuth,
+  rateLimitByUser,
+  generateToken,
+  generateRefreshToken
+};
+*/
 
-// Exportar 'authenticate' como padrão para compatibilidade com `const auth = require(...)`
-module.exports = authenticate;
-
-// Adicionar 'authenticate' e 'auth' como propriedades para diferentes estilos de importação
+// ✅ EXPORTAR AUTHENTICATE COMO PADRÃO E MANTER EXPORTS NOMEADOS
+module.exports = authenticate; // Export padrão
 module.exports.authenticate = authenticate;
-module.exports.auth = authenticate; // Para compatibilidade se algum código usar `require(...).auth`
-
-// Exportar TODAS as outras funções como propriedades nomeadas
-// para permitir a importação desestruturada: const { authorize } = require(...), etc.
 module.exports.authorize = authorize;
 module.exports.checkPermission = checkPermission;
 module.exports.checkOwnershipOrAdmin = checkOwnershipOrAdmin;
