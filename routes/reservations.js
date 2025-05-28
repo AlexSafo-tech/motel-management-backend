@@ -6,6 +6,7 @@ const mongoose = require('mongoose');
 const Reservation = require('../models/Reservation');
 const Room = require('../models/Room');
 const { authenticate } = require('../middleware/auth'); // ✅ CORRIGIDO
+const auth = authenticate; // adicionar esta linha para compatibilidade
 
 console.log('✅ Modelo Reservation importado com sucesso');
 
