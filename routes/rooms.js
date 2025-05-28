@@ -2,10 +2,8 @@
 const express = require('express');
 const router = express.Router();
 const mongoose = require('mongoose');
+const Room = require('../models/Room'); // ✅ IMPORTAR MODELO CORRETO
 const { authenticate } = require('../middleware/auth'); // ✅ CORRIGIDO
-
-// ✅ IMPORTAR O MODELO ROOM
-const Room = require('../models/Room');
 
 // ✅ ROTA GET - LISTAR TODOS OS QUARTOS
 router.get('/', authenticate, async (req, res) => {
@@ -116,8 +114,7 @@ router.post('/', authenticate, async (req, res) => {
       capacity: parseInt(capacity) || 2,
       floor: floor || number.toString().charAt(0) || '1',
       description: description || `Quarto ${number} - ${type}`,
-      amenities,
-      createdBy: req.user._id
+      amenities
     };
     
     // Configurar preços
@@ -129,16 +126,6 @@ router.post('/', authenticate, async (req, res) => {
         'daily': parseFloat(prices['daily']) || 150.00
       };
       roomData.price = roomData.prices['4h']; // Para compatibilidade
-    } else if (periods && Array.isArray(periods)) {
-      // Converter períodos em preços
-      const pricesObj = {};
-      periods.forEach(period => {
-        if (period.id && period.preco) {
-          pricesObj[period.id] = parseFloat(period.preco);
-        }
-      });
-      roomData.prices = pricesObj;
-      roomData.price = pricesObj['4h'] || 50.00;
     } else if (price) {
       roomData.price = parseFloat(price) || 50.00;
       roomData.prices = {
@@ -265,7 +252,7 @@ router.delete('/:id', authenticate, async (req, res) => {
   }
 });
 
-// ✅ ROTA PATCH - ATUALIZAR QUARTO COMPLETO (INCLUINDO STATUS E MOTIVO)
+// ✅ ROTA PATCH - ATUALIZAR STATUS OU CAMPOS ESPECÍFICOS
 router.patch('/:id', authenticate, async (req, res) => {
   try {
     console.log(`🔄 PATCH /api/rooms/${req.params.id}`);
