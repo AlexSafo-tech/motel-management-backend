@@ -101,6 +101,12 @@ const checkPermission = (permission) => {
     }
 
     // Verificar se o usuário tem a permissão específica
+    // Esta lógica assume que req.user.permissions é um objeto como { 'nomeDaPermissao': true }
+    // ou que você tem uma função getPermissions(user.role) que retorna um array ou objeto.
+    // Se `req.user.permissions` não está populado com as permissões do usuário vindas do BD ou de uma definição de role,
+    // esta verificação pode não funcionar como esperado. No seu `routes/auth.js`, `getPermissions` é chamado,
+    // mas o resultado não parece ser anexado a `req.user` diretamente no middleware `authenticate`.
+    // Isso pode ser um ponto de atenção para a lógica de `checkPermission`.
     if (!req.user.permissions || !req.user.permissions[permission]) {
       return res.status(403).json({
         success: false,
@@ -130,7 +136,8 @@ const checkOwnershipOrAdmin = (req, res, next) => {
   }
 
   // Usuário pode acessar apenas seus próprios dados
-  if (req.user._id.toString() === targetUserId) {
+  // req.user._id vem do token/DB, targetUserId vem dos parâmetros da rota
+  if (req.user._id && req.user._id.toString() === targetUserId) {
     return next();
   }
 
@@ -156,7 +163,8 @@ const optionalAuth = async (req, res, next) => {
 
     next();
   } catch (error) {
-    // Ignorar erros de token em autenticação opcional
+    // Ignorar erros de token em autenticação opcional (ex: token expirado ou inválido)
+    // O usuário simplesmente não será autenticado, mas a requisição continua.
     next();
   }
 };
@@ -166,51 +174,58 @@ const rateLimitByUser = (maxRequests = 100, windowMs = 15 * 60 * 1000) => {
   const requests = new Map();
 
   return (req, res, next) => {
-    const userId = req.user?._id?.toString() || req.ip;
+    const userId = req.user?._id?.toString() || req.ip; // Usa userId se autenticado, senão IP
     const now = Date.now();
-    const windowStart = now - windowMs;
-
-    // Limpar requisições antigas
-    if (requests.has(userId)) {
-      const userRequests = requests.get(userId).filter(time => time > windowStart);
-      requests.set(userId, userRequests);
-    } else {
+    
+    // Inicializa o array de timestamps de requisição para o usuário, se não existir
+    if (!requests.has(userId)) {
       requests.set(userId, []);
     }
 
-    const userRequests = requests.get(userId);
+    const userTimestamps = requests.get(userId);
+    
+    // Remove timestamps que estão fora da janela de tempo
+    const windowStart = now - windowMs;
+    const recentTimestamps = userTimestamps.filter(time => time > windowStart);
+    requests.set(userId, recentTimestamps);
 
-    if (userRequests.length >= maxRequests) {
+    if (recentTimestamps.length >= maxRequests) {
+      // Calcula o tempo para a próxima tentativa (aproximado)
+      const oldestRequestInWindow = recentTimestamps.length > 0 ? recentTimestamps[0] : now;
+      const retryAfterSeconds = Math.ceil((oldestRequestInWindow + windowMs - now) / 1000);
+      
+      res.setHeader('Retry-After', retryAfterSeconds);
       return res.status(429).json({
         success: false,
         message: 'Muitas requisições. Tente novamente em alguns minutos.',
-        retryAfter: Math.ceil(windowMs / 1000)
+        retryAfter: retryAfterSeconds // Informa o cliente em segundos
       });
     }
 
-    userRequests.push(now);
+    recentTimestamps.push(now);
     next();
   };
 };
 
 // Utilitário para gerar token JWT
-const generateToken = (userId) => {
+const generateToken = (userId, email, role) => { // Adicionado email e role para um payload mais rico
   return jwt.sign(
-    { id: userId },
+    { id: userId, email, role }, // Payload do token
     process.env.JWT_SECRET,
-    { expiresIn: '24h' }
+    { expiresIn: '24h' } // Tempo de expiração do token
   );
 };
 
 // Utilitário para gerar refresh token (válido por mais tempo)
 const generateRefreshToken = (userId) => {
   return jwt.sign(
-    { id: userId, type: 'refresh' },
-    process.env.JWT_SECRET,
-    { expiresIn: '7d' }
+    { id: userId, type: 'refresh' }, // type: 'refresh' para distinguir de access tokens
+    process.env.JWT_REFRESH_SECRET, // Idealmente, usar um segredo diferente para refresh tokens
+    { expiresIn: '7d' } // Tempo de expiração maior para refresh tokens
   );
 };
 
+/* // Bloco de exportação original que será substituído:
 module.exports = {
   authenticate,
   authorize,
@@ -221,3 +236,18 @@ module.exports = {
   generateToken,
   generateRefreshToken
 };
+*/
+
+// ✅ EXPORTAR TAMBÉM COMO 'auth' PARA COMPATIBILIDADE
+module.exports = authenticate; // Agora 'authenticate' é a exportação principal
+module.exports.auth = authenticate; // Permite require('...').auth ou const { auth } = require('...')
+module.exports.authenticate = authenticate; // Permite const { authenticate } = require('...')
+
+// Para exportar as outras funções também, você precisaria adicioná-las como propriedades aqui:
+// module.exports.authorize = authorize;
+// module.exports.checkPermission = checkPermission;
+// module.exports.checkOwnershipOrAdmin = checkOwnershipOrAdmin;
+// module.exports.optionalAuth = optionalAuth;
+// module.exports.rateLimitByUser = rateLimitByUser;
+// module.exports.generateToken = generateToken;
+// module.exports.generateRefreshToken = generateRefreshToken;
