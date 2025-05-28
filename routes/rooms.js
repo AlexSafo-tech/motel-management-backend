@@ -1,121 +1,33 @@
-// routes/rooms.js - ROTAS COMPLETAS PARA QUARTOS
+// routes/rooms.js - ROTAS CORRIGIDAS USANDO MODELO SEPARADO
 const express = require('express');
 const router = express.Router();
-const mongoose = require('mongoose');
-
-// ✅ MIDDLEWARE DE AUTENTICAÇÃO (SIMPLIFICADO)
-const authMiddleware = (req, res, next) => {
-  const token = req.headers.authorization?.replace('Bearer ', '');
-  if (!token) {
-    return res.status(401).json({ 
-      success: false, 
-      message: 'Token de autenticação necessário' 
-    });
-  }
-  // Para simplificar, aceitar qualquer token que comece com 'eyJ' (JWT)
-  if (token.startsWith('eyJ') || token.includes('demo-') || token.includes('emergency-')) {
-    req.user = { id: 'user-id', role: 'admin' };
-    next();
-  } else {
-    res.status(401).json({ 
-      success: false, 
-      message: 'Token inválido' 
-    });
-  }
-};
-
-// ✅ SCHEMA DO QUARTO
-const roomSchema = new mongoose.Schema({
-  number: {
-    type: String,
-    required: true,
-    unique: true,
-    trim: true
-  },
-  type: {
-    type: String,
-    required: true,
-    enum: ['standard', 'premium', 'suite', 'luxo'],
-    default: 'standard'
-  },
-  status: {
-    type: String,
-    required: true,
-    enum: ['available', 'occupied', 'maintenance', 'cleaning'],
-    default: 'available'
-  },
-  capacity: {
-    type: Number,
-    required: true,
-    min: 1,
-    max: 10,
-    default: 2
-  },
-  floor: {
-    type: String,
-    required: true,
-    default: '1'
-  },
-  prices: {
-    '4h': { type: Number, required: true, default: 50.00 },
-    '6h': { type: Number, required: true, default: 70.00 },
-    '12h': { type: Number, required: true, default: 100.00 },
-    'daily': { type: Number, required: true, default: 150.00 }
-  },
-  price: { // Para compatibilidade com versões antigas
-    type: Number,
-    default: 50.00
-  },
-  description: {
-    type: String,
-    trim: true,
-    default: ''
-  },
-  amenities: [{
-    type: String
-  }],
-  lastCleaned: {
-    type: Date,
-    default: Date.now
-  },
-  lastMaintenance: {
-    type: Date,
-    default: Date.now
-  },
-  maintenanceReason: {
-    type: String,
-    trim: true,
-    maxlength: 100
-  }
-}, {
-  timestamps: true
-});
-
-// ✅ CRIAR MODELO
-const Room = mongoose.model('Room', roomSchema);
+const Room = require('../models/Room'); // ✅ IMPORTAR MODELO DO ARQUIVO CORRETO
+const auth = require('../middleware/auth');
 
 // ✅ ROTA GET - LISTAR TODOS OS QUARTOS
-router.get('/', authMiddleware, async (req, res) => {
+router.get('/', auth, async (req, res) => {
   try {
     console.log('📥 GET /api/rooms - Listando quartos...');
-    console.log('👤 Usuário:', req.user);
     
     const rooms = await Room.find().sort({ number: 1 });
     
     console.log(`✅ ${rooms.length} quartos encontrados`);
+    
+    // ✅ CALCULAR ESTATÍSTICAS
+    const stats = {
+      total: rooms.length,
+      available: rooms.filter(r => r.status === 'available').length,
+      occupied: rooms.filter(r => r.status === 'occupied').length,
+      maintenance: rooms.filter(r => r.status === 'maintenance').length,
+      cleaning: rooms.filter(r => r.status === 'cleaning').length
+    };
     
     res.json({
       success: true,
       message: `${rooms.length} quartos encontrados`,
       data: {
         rooms: rooms,
-        total: rooms.length,
-        stats: {
-          available: rooms.filter(r => r.status === 'available').length,
-          occupied: rooms.filter(r => r.status === 'occupied').length,
-          maintenance: rooms.filter(r => r.status === 'maintenance').length,
-          cleaning: rooms.filter(r => r.status === 'cleaning').length
-        }
+        stats: stats
       }
     });
     
@@ -130,7 +42,7 @@ router.get('/', authMiddleware, async (req, res) => {
 });
 
 // ✅ ROTA GET - OBTER QUARTO POR ID
-router.get('/:id', authMiddleware, async (req, res) => {
+router.get('/:id', auth, async (req, res) => {
   try {
     console.log(`📥 GET /api/rooms/${req.params.id}`);
     
@@ -160,7 +72,7 @@ router.get('/:id', authMiddleware, async (req, res) => {
 });
 
 // ✅ ROTA POST - CRIAR NOVO QUARTO
-router.post('/', authMiddleware, async (req, res) => {
+router.post('/', auth, async (req, res) => {
   try {
     console.log('📤 POST /api/rooms - Criando novo quarto...');
     console.log('📦 Dados recebidos:', req.body);
@@ -172,12 +84,13 @@ router.post('/', authMiddleware, async (req, res) => {
       capacity = 2,
       floor,
       prices,
+      periods,
       price,
       description = '',
       amenities = []
     } = req.body;
     
-    // Validações básicas
+    // ✅ VALIDAÇÕES
     if (!number) {
       return res.status(400).json({
         success: false,
@@ -185,7 +98,7 @@ router.post('/', authMiddleware, async (req, res) => {
       });
     }
     
-    // Verificar se quarto já existe
+    // ✅ VERIFICAR SE JÁ EXISTE
     const existingRoom = await Room.findOne({ number });
     if (existingRoom) {
       return res.status(400).json({
@@ -194,7 +107,7 @@ router.post('/', authMiddleware, async (req, res) => {
       });
     }
     
-    // Preparar dados do quarto
+    // ✅ PREPARAR DADOS
     const roomData = {
       number: number.toString().trim(),
       type,
@@ -202,39 +115,36 @@ router.post('/', authMiddleware, async (req, res) => {
       capacity: parseInt(capacity) || 2,
       floor: floor || number.toString().charAt(0) || '1',
       description: description || `Quarto ${number} - ${type}`,
-      amenities
+      amenities,
+      createdBy: req.user._id
     };
     
-    // Configurar preços
+    // ✅ CONFIGURAR PREÇOS
     if (prices && typeof prices === 'object') {
-      roomData.prices = {
-        '4h': parseFloat(prices['4h']) || 50.00,
-        '6h': parseFloat(prices['6h']) || 70.00,
-        '12h': parseFloat(prices['12h']) || 100.00,
-        'daily': parseFloat(prices['daily']) || 150.00
-      };
-      roomData.price = roomData.prices['4h']; // Para compatibilidade
+      roomData.prices = prices;
+    } else if (periods && Array.isArray(periods)) {
+      // Converter períodos em preços
+      const pricesObj = {};
+      periods.forEach(period => {
+        if (period.id && period.preco) {
+          pricesObj[period.id] = parseFloat(period.preco);
+        }
+      });
+      roomData.prices = pricesObj;
     } else if (price) {
-      roomData.price = parseFloat(price) || 50.00;
+      // Usar preço único para todos os períodos
+      const basePrice = parseFloat(price) || 50.00;
       roomData.prices = {
-        '4h': roomData.price,
-        '6h': roomData.price * 1.4,
-        '12h': roomData.price * 2,
-        'daily': roomData.price * 3
+        '4h': basePrice,
+        '6h': basePrice * 1.4,
+        '12h': basePrice * 2,
+        'daily': basePrice * 3
       };
-    } else {
-      roomData.prices = {
-        '4h': 50.00,
-        '6h': 70.00,
-        '12h': 100.00,
-        'daily': 150.00
-      };
-      roomData.price = 50.00;
     }
     
     console.log('💾 Dados para salvar:', roomData);
     
-    // Criar quarto
+    // ✅ CRIAR E SALVAR
     const room = new Room(roomData);
     const savedRoom = await room.save();
     
@@ -271,15 +181,19 @@ router.post('/', authMiddleware, async (req, res) => {
   }
 });
 
-// ✅ ROTA PUT - ATUALIZAR QUARTO
-router.put('/:id', authMiddleware, async (req, res) => {
+// ✅ ROTA PUT - ATUALIZAR QUARTO COMPLETO
+router.put('/:id', auth, async (req, res) => {
   try {
     console.log(`📤 PUT /api/rooms/${req.params.id}`);
     console.log('📦 Dados para atualizar:', req.body);
     
     const room = await Room.findByIdAndUpdate(
       req.params.id,
-      req.body,
+      { 
+        ...req.body,
+        updatedBy: req.user._id,
+        updatedAt: new Date()
+      },
       { new: true, runValidators: true }
     );
     
@@ -290,7 +204,55 @@ router.put('/:id', authMiddleware, async (req, res) => {
       });
     }
     
-    console.log('✅ Quarto atualizado:', room._id);
+    console.log('✅ Quarto atualizado:', room.number);
+    
+    res.json({
+      success: true,
+      message: 'Quarto atualizado com sucesso',
+      data: room
+    });
+    
+  } catch (error) {
+    console.error('❌ Erro ao atualizar quarto:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erro ao atualizar quarto',
+      error: error.message
+    });
+  }
+});
+
+// ✅ ROTA PATCH - ATUALIZAR PARCIALMENTE
+router.patch('/:id', auth, async (req, res) => {
+  try {
+    console.log(`🔄 PATCH /api/rooms/${req.params.id}`);
+    console.log('📦 Campos para atualizar:', Object.keys(req.body));
+    
+    const updateData = {
+      ...req.body,
+      updatedBy: req.user._id,
+      updatedAt: new Date()
+    };
+    
+    // ✅ SE MUDAR STATUS PARA NÃO-MANUTENÇÃO, LIMPAR MOTIVO
+    if (req.body.status && req.body.status !== 'maintenance') {
+      updateData.$unset = { maintenanceReason: 1 };
+    }
+    
+    const room = await Room.findByIdAndUpdate(
+      req.params.id,
+      updateData,
+      { new: true, runValidators: true }
+    );
+    
+    if (!room) {
+      return res.status(404).json({
+        success: false,
+        message: 'Quarto não encontrado'
+      });
+    }
+    
+    console.log('✅ Quarto atualizado parcialmente:', room.number);
     
     res.json({
       success: true,
@@ -309,9 +271,17 @@ router.put('/:id', authMiddleware, async (req, res) => {
 });
 
 // ✅ ROTA DELETE - DELETAR QUARTO
-router.delete('/:id', authMiddleware, async (req, res) => {
+router.delete('/:id', auth, async (req, res) => {
   try {
     console.log(`🗑️ DELETE /api/rooms/${req.params.id}`);
+    
+    // ✅ VERIFICAR SE É ADMIN
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Apenas administradores podem deletar quartos'
+      });
+    }
     
     const room = await Room.findByIdAndDelete(req.params.id);
     
@@ -340,67 +310,32 @@ router.delete('/:id', authMiddleware, async (req, res) => {
   }
 });
 
-// ✅ ROTA PATCH - ATUALIZAR QUARTO COMPLETO (INCLUINDO STATUS E MOTIVO)
-router.patch('/:id', authMiddleware, async (req, res) => {
-  try {
-    console.log(`🔄 PATCH /api/rooms/${req.params.id}`);
-    console.log('📦 Dados para atualizar:', req.body);
-    
-    const room = await Room.findByIdAndUpdate(
-      req.params.id,
-      req.body,
-      { new: true, runValidators: true }
-    );
-    
-    if (!room) {
-      return res.status(404).json({
-        success: false,
-        message: 'Quarto não encontrado'
-      });
-    }
-    
-    console.log('✅ Quarto atualizado:', room._id);
-    
-    res.json({
-      success: true,
-      message: 'Quarto atualizado com sucesso',
-      data: room
-    });
-    
-  } catch (error) {
-    console.error('❌ Erro ao atualizar quarto:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Erro ao atualizar quarto',
-      error: error.message
-    });
-  }
-});
-
-// ✅ ROTA PATCH - ATUALIZAR STATUS DO QUARTO (ESPECÍFICA)
-router.patch('/:id/status', authMiddleware, async (req, res) => {
+// ✅ ROTA PATCH - ATUALIZAR STATUS (ESPECÍFICA)
+router.patch('/:id/status', auth, async (req, res) => {
   try {
     console.log(`🔄 PATCH /api/rooms/${req.params.id}/status`);
-    console.log('📦 Novo status:', req.body.status);
     
     const { status, maintenanceReason } = req.body;
     
-    if (!['available', 'occupied', 'maintenance', 'cleaning'].includes(status)) {
+    // ✅ VALIDAR STATUS
+    const validStatuses = ['available', 'occupied', 'maintenance', 'cleaning'];
+    if (!validStatuses.includes(status)) {
       return res.status(400).json({
         success: false,
-        message: 'Status inválido'
+        message: 'Status inválido. Use: ' + validStatuses.join(', ')
       });
     }
     
-    const updateData = { status };
+    const updateData = { 
+      status,
+      updatedBy: req.user._id,
+      updatedAt: new Date()
+    };
     
-    // Se for manutenção e tiver motivo, adicionar
+    // ✅ ADICIONAR OU REMOVER MOTIVO DE MANUTENÇÃO
     if (status === 'maintenance' && maintenanceReason) {
       updateData.maintenanceReason = maintenanceReason;
-    }
-    
-    // Se não for manutenção, remover motivo anterior
-    if (status !== 'maintenance') {
+    } else if (status !== 'maintenance') {
       updateData.$unset = { maintenanceReason: 1 };
     }
     
@@ -435,46 +370,17 @@ router.patch('/:id/status', authMiddleware, async (req, res) => {
   }
 });
 
-// ✅ ROTA GET - ESTATÍSTICAS DOS QUARTOS
-router.get('/stats/summary', authMiddleware, async (req, res) => {
+// ✅ ROTA GET - ESTATÍSTICAS
+router.get('/stats/summary', auth, async (req, res) => {
   try {
     console.log('📊 GET /api/rooms/stats/summary');
     
-    const total = await Room.countDocuments();
-    const available = await Room.countDocuments({ status: 'available' });
-    const occupied = await Room.countDocuments({ status: 'occupied' });
-    const maintenance = await Room.countDocuments({ status: 'maintenance' });
-    const cleaning = await Room.countDocuments({ status: 'cleaning' });
-    
-    const byType = await Room.aggregate([
-      { $group: { _id: '$type', count: { $sum: 1 } } }
-    ]);
-    
-    const byFloor = await Room.aggregate([
-      { $group: { _id: '$floor', count: { $sum: 1 } } }
-    ]);
+    const stats = await Room.getStats();
     
     res.json({
       success: true,
       message: 'Estatísticas dos quartos',
-      data: {
-        total,
-        status: {
-          available,
-          occupied,
-          maintenance,
-          cleaning
-        },
-        byType: byType.reduce((acc, item) => {
-          acc[item._id] = item.count;
-          return acc;
-        }, {}),
-        byFloor: byFloor.reduce((acc, item) => {
-          acc[item._id] = item.count;
-          return acc;
-        }, {}),
-        occupancyRate: total > 0 ? ((occupied / total) * 100).toFixed(1) : 0
-      }
+      data: stats
     });
     
   } catch (error) {
@@ -482,6 +388,29 @@ router.get('/stats/summary', authMiddleware, async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Erro ao buscar estatísticas',
+      error: error.message
+    });
+  }
+});
+
+// ✅ ROTA GET - QUARTOS DISPONÍVEIS
+router.get('/status/available', auth, async (req, res) => {
+  try {
+    console.log('🏨 GET /api/rooms/status/available');
+    
+    const availableRooms = await Room.findAvailable();
+    
+    res.json({
+      success: true,
+      message: `${availableRooms.length} quartos disponíveis`,
+      data: availableRooms
+    });
+    
+  } catch (error) {
+    console.error('❌ Erro ao buscar quartos disponíveis:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erro ao buscar quartos disponíveis',
       error: error.message
     });
   }
