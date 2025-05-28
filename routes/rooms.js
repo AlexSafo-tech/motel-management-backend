@@ -4,6 +4,7 @@ const router = express.Router();
 const mongoose = require('mongoose');
 const Room = require('../models/Room'); // ✅ IMPORTAR MODELO CORRETO
 const { authenticate } = require('../middleware/auth'); // ✅ CORRIGIDO
+const auth = authenticate; // adicionar esta linha para compatibilidade
 
 // ✅ ROTA GET - LISTAR TODOS OS QUARTOS
 router.get('/', authenticate, async (req, res) => {
