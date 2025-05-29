@@ -140,8 +140,8 @@ reservationSchema.index({ status: 1, createdAt: -1 });
 reservationSchema.index({ roomId: 1, checkIn: 1 });
 reservationSchema.index({ customerName: 'text', customerPhone: 'text' });
 
-// ✅ MIDDLEWARE PRE-SAVE
-reservationSchema.pre('save', async function(next) {
+// ✅ MIDDLEWARE PRE-VALIDATE (CORRIGIDO)
+reservationSchema.pre('validate', async function(next) {
   // Auto-gerar número de reserva se não existir
   if (this.isNew && !this.reservationNumber) {
     try {
