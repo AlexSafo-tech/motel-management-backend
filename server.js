@@ -4,7 +4,6 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const path = require('path');
 require('dotenv').config();
-const setupRoutes = require('./routes/setup'); // <<<<====== ADICIONADO AQUI
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -54,14 +53,13 @@ app.get('/health', (req, res) => {
 app.get('/', (req, res) => {
   const availableEndpoints = [
     '/api/auth',
-    '/api/users', // Adicionando users aqui também se for um endpoint principal
+    '/api/users',
     '/api/rooms',
     '/api/reservations',  
     '/api/customers',
     '/api/orders',
     '/api/products',
-    '/api/dashboard',
-    '/api/setup' // Adicionando a nova rota para informação
+    '/api/dashboard'
   ];
 
   res.json({
@@ -69,7 +67,7 @@ app.get('/', (req, res) => {
     message: 'PMS Motel API',
     version: '1.0.0',
     availableEndpoints: availableEndpoints,
-    documentation: '/api/docs' // Se você tiver uma rota de documentação
+    documentation: '/api/docs'
   });
 });
 
@@ -79,11 +77,11 @@ try {
   app.use('/api/auth', require('./routes/auth'));
   console.log('✅ Rota /api/auth registrada');
 
-  // ✅ ROTA DE USUÁRIOS - IMPORTANTE!
+  // ✅ ROTA DE USUÁRIOS
   app.use('/api/users', require('./routes/users'));
   console.log('✅ Rota /api/users registrada');
 
-  // ✅ ROTA DE QUARTOS - IMPORTANTE!
+  // ✅ ROTA DE QUARTOS
   app.use('/api/rooms', require('./routes/rooms'));
   console.log('✅ Rota /api/rooms registrada');
 
@@ -102,12 +100,6 @@ try {
 
   app.use('/api/dashboard', require('./routes/dashboard'));
   console.log('✅ Rota /api/dashboard registrada');
-
-  // ⚠️ IMPORTANTE: Esta é uma rota temporária apenas para criar o primeiro admin
-  // Remova após usar!
-  app.use('/api/setup', setupRoutes); // <<<<====== ADICIONADO AQUI
-  console.log('✅ Rota /api/setup registrada (TEMPORÁRIA)');
-
 
 } catch (error) {
   console.error('❌ Erro ao registrar rotas:', error);
@@ -136,7 +128,7 @@ try {
 
 // ✅ MIDDLEWARE DE ERRO 404
 app.use('*', (req, res) => {
-  const availableEndpoints = [ // Manter atualizado ou gerar dinamicamente se possível
+  const availableEndpoints = [
     '/api/auth',
     '/api/users',
     '/api/rooms',
@@ -144,8 +136,7 @@ app.use('*', (req, res) => {
     '/api/customers',  
     '/api/orders',
     '/api/products',
-    '/api/dashboard',
-    '/api/setup' // Adicionar também aqui
+    '/api/dashboard'
   ];
 
   res.status(404).json({
@@ -176,18 +167,17 @@ const startServer = async () => {
     app.listen(PORT, () => {
       console.log('🚀 Servidor iniciado com sucesso!');
       console.log(`🌐 URL: http://localhost:${PORT}`);
-      console.log(`🌐 URL Render: https://pousada-1hlt.onrender.com`); // Verifique se esta URL é a correta do seu deploy
+      console.log(`🌐 URL Render: https://pousada-1hlt.onrender.com`);
       console.log('📋 Endpoints disponíveis:');
       console.log('    GET  / - Informações da API');
       console.log('    GET  /health - Health check');
-      console.log('    POST /api/auth/login - Login');
-      console.log('    GET  /api/users - Listar usuários (se aplicável)');
+      console.log('    POST /api/auth - Login');
+      console.log('    GET  /api/users - Listar usuários');
       console.log('    GET  /api/rooms - Listar quartos');
       console.log('    POST /api/rooms - Criar quarto');
       console.log('    GET  /api/reservations - Listar reservas');
       console.log('    POST /api/reservations - Criar reserva');
-      console.log('    GET  /api/dashboard/stats - Estatísticas');
-      console.log('    GET  /api/setup/create-admin - Criar admin (TEMPORÁRIO - se for este o endpoint)'); // Exemplo
+      console.log('    GET  /api/dashboard/overview - Estatísticas');
       console.log('🎯 Sistema PMS Motel online!');
     });
   } catch (error) {
