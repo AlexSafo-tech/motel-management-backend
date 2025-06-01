@@ -1,4 +1,4 @@
-// backend/models/Room.js - MODELO MELHORADO PARA MOTEL
+// backend/models/Room.js - MODELO MELHORADO COM TIPOS DINÂMICOS
 const mongoose = require('mongoose');
 
 // ✅ SCHEMA FLEXÍVEL E COMPLETO
@@ -17,15 +17,19 @@ const roomSchema = new mongoose.Schema({
     }
   },
 
+  // ✅ TIPO FLEXÍVEL - AGORA ACEITA QUALQUER STRING
   type: {
     type: String,
     required: [true, 'Tipo do quarto é obrigatório'],
-    enum: {
-      values: ['standard', 'premium', 'suite', 'luxo'],
-      message: 'Tipo deve ser: standard, premium, suite ou luxo'
-    },
+    trim: true,
+    lowercase: true,
     default: 'standard',
-    lowercase: true
+    validate: {
+      validator: function(v) {
+        return v.length >= 2; // Pelo menos 2 caracteres
+      },
+      message: 'Tipo deve ter pelo menos 2 caracteres'
+    }
   },
 
   status: {
@@ -58,41 +62,52 @@ const roomSchema = new mongoose.Schema({
     }
   },
 
-  // ✅ PREÇOS POR PERÍODO - FLEXÍVEL
+  // ✅ PREÇOS DINÂMICOS - AGORA SUPORTA QUALQUER PERÍODO
   prices: {
-    type: {
-      '4h': {
-        type: Number,
-        required: [true, 'Preço 4h é obrigatório'],
-        min: [0, 'Preço não pode ser negativo'],
-        default: 50.00
-      },
-      '6h': {
-        type: Number,
-        required: [true, 'Preço 6h é obrigatório'],
-        min: [0, 'Preço não pode ser negativo'],
-        default: 70.00
-      },
-      '12h': {
-        type: Number,
-        required: [true, 'Preço 12h é obrigatório'],
-        min: [0, 'Preço não pode ser negativo'],
-        default: 100.00
-      },
-      'daily': {
-        type: Number,
-        required: [true, 'Preço diária é obrigatório'],
-        min: [0, 'Preço não pode ser negativo'],
-        default: 150.00
-      }
+    type: Map,
+    of: {
+      type: Number,
+      min: [0, 'Preço não pode ser negativo']
     },
-    required: [true, 'Preços são obrigatórios'],
-    default: () => ({
-      '4h': 50.00,
-      '6h': 70.00,
-      '12h': 100.00,
-      'daily': 150.00
-    })
+    default: function() {
+      return new Map([
+        ['4h', 50.00],
+        ['6h', 70.00],
+        ['12h', 100.00],
+        ['daily', 150.00]
+      ]);
+    }
+  },
+
+  // ✅ PERÍODOS DISPONÍVEIS PARA ESTE QUARTO
+  periods: {
+    type: [{
+      id: {
+        type: String,
+        required: true
+      },
+      nome: {
+        type: String,
+        required: true
+      },
+      preco: {
+        type: Number,
+        required: true,
+        min: [0, 'Preço não pode ser negativo']
+      },
+      ativo: {
+        type: Boolean,
+        default: true
+      }
+    }],
+    default: []
+  },
+
+  // ✅ PREÇO BASE (COMPATIBILIDADE)
+  price: {
+    type: Number,
+    min: [0, 'Preço não pode ser negativo'],
+    default: 50.00
   },
 
   // ✅ CAMPOS DESCRITIVOS
@@ -120,6 +135,13 @@ const roomSchema = new mongoose.Schema({
       },
       message: 'Amenidade inválida detectada'
     }
+  },
+
+  // ✅ MOTIVO DE MANUTENÇÃO
+  maintenanceReason: {
+    type: String,
+    trim: true,
+    maxlength: [100, 'Motivo não pode ter mais de 100 caracteres']
   },
 
   // ✅ CAMPOS DE CONTROLE
@@ -150,7 +172,7 @@ const roomSchema = new mongoose.Schema({
   }
 }, {
   // ✅ OPÇÕES DO SCHEMA
-  timestamps: true, // Adiciona createdAt e updatedAt automaticamente
+  timestamps: true,
   
   // ✅ TRANSFORMAÇÃO DO JSON
   toJSON: {
@@ -158,6 +180,12 @@ const roomSchema = new mongoose.Schema({
       ret.id = ret._id;
       delete ret._id;
       delete ret.__v;
+      
+      // Converter Map para Object para JSON
+      if (ret.prices) {
+        ret.prices = Object.fromEntries(ret.prices);
+      }
+      
       return ret;
     }
   },
@@ -181,6 +209,11 @@ roomSchema.pre('save', function(next) {
   // Atualizar timestamp
   this.updatedAt = new Date();
   
+  // Garantir que o preço base esteja sincronizado
+  if (this.prices && this.prices.size > 0) {
+    this.price = this.prices.get('4h') || this.prices.get('daily') || 50.00;
+  }
+  
   next();
 });
 
@@ -190,7 +223,10 @@ roomSchema.methods.isAvailable = function() {
 };
 
 roomSchema.methods.getPriceForPeriod = function(period) {
-  return this.prices[period] || this.prices['4h'];
+  if (this.prices && this.prices.has(period)) {
+    return this.prices.get(period);
+  }
+  return this.price || 50.00;
 };
 
 roomSchema.methods.getFloorName = function() {
@@ -202,6 +238,16 @@ roomSchema.methods.getFloorName = function() {
   return floorNames[this.floor] || `${this.floor}º Andar`;
 };
 
+// ✅ NOVO: VERIFICAR SE PERÍODO ESTÁ DISPONÍVEL
+roomSchema.methods.hasPeriod = function(periodId) {
+  return this.periods.some(p => p.id === periodId && p.ativo);
+};
+
+// ✅ NOVO: OBTER PERÍODO ESPECÍFICO
+roomSchema.methods.getPeriod = function(periodId) {
+  return this.periods.find(p => p.id === periodId);
+};
+
 // ✅ MÉTODOS ESTÁTICOS
 roomSchema.statics.findByFloor = function(floor) {
   return this.find({ floor: floor.toString() });
@@ -209,6 +255,10 @@ roomSchema.statics.findByFloor = function(floor) {
 
 roomSchema.statics.findAvailable = function() {
   return this.find({ status: 'available', isActive: true });
+};
+
+roomSchema.statics.findByType = function(type) {
+  return this.find({ type: type.toLowerCase(), isActive: true });
 };
 
 roomSchema.statics.getStats = async function() {
@@ -227,9 +277,25 @@ roomSchema.statics.getStats = async function() {
             $cond: [{ $eq: ['$status', 'occupied'] }, 1, 0]
           }
         },
+        maintenance: {
+          $sum: {
+            $cond: [{ $eq: ['$status', 'maintenance'] }, 1, 0]
+          }
+        },
+        cleaning: {
+          $sum: {
+            $cond: [{ $eq: ['$status', 'cleaning'] }, 1, 0]
+          }
+        },
         byFloor: {
           $push: {
             floor: '$floor',
+            count: 1
+          }
+        },
+        byType: {
+          $push: {
+            type: '$type',
             count: 1
           }
         }
@@ -241,7 +307,10 @@ roomSchema.statics.getStats = async function() {
     total: 0,
     available: 0,
     occupied: 0,
-    byFloor: []
+    maintenance: 0,
+    cleaning: 0,
+    byFloor: [],
+    byType: []
   };
 };
 
@@ -250,5 +319,4 @@ roomSchema.index({ floor: 1, status: 1 });
 roomSchema.index({ type: 1, status: 1 });
 roomSchema.index({ number: 1 }, { unique: true });
 
-// ✅ CORREÇÃO DO ERRO: Evita sobrescrever modelo já compilado
 module.exports = mongoose.models.Room || mongoose.model('Room', roomSchema);
