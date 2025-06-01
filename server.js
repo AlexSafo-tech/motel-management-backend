@@ -80,6 +80,25 @@ app.get('/', (req, res) => {
   });
 });
 
+// ✅ ROTA TEMPORÁRIA PARA MIGRAR DADOS - Adicionar após a rota debug
+app.post('/debug/migrate-room-types', async (req, res) => {
+  try {
+    const RoomType = require('./models/RoomType');
+    const migrados = await RoomType.migrarCampoAtivo();
+    
+    res.json({
+      success: true,
+      message: `${migrados} tipos migrados com sucesso`,
+      migrados: migrados
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 // ✅ ROTA DE DEBUG - MOVIDA PARA AQUI (ANTES DAS OUTRAS ROTAS)
 app.get('/debug/room-types', async (req, res) => {
   try {
