@@ -1,4 +1,4 @@
-// models/RoomType.js - MODELO PARA TIPOS DE QUARTO DINÂMICOS
+// models/RoomType.js - MODELO CORRIGIDO SEM PREÇOS HARDCODED
 const mongoose = require('mongoose');
 
 const roomTypeSchema = new mongoose.Schema({
@@ -10,7 +10,7 @@ const roomTypeSchema = new mongoose.Schema({
     lowercase: true,
     validate: {
       validator: function(v) {
-        return /^[a-z0-9_]+$/.test(v); // apenas letras minúsculas, números e underscore
+        return /^[a-z0-9_]+$/.test(v);
       },
       message: 'ID deve conter apenas letras minúsculas, números e underscore'
     }
@@ -29,43 +29,33 @@ const roomTypeSchema = new mongoose.Schema({
     }
   },
 
-  // Configuração de períodos para este tipo
+  // ✅ CONFIGURAÇÃO DE PERÍODOS CORRIGIDA
   periodosConfig: {
-    type: Map,
-    of: {
-      ativo: { type: Boolean, default: true },
-      preco: { 
-        type: Number, 
-        min: [0, 'Preço não pode ser negativo'],
-        default: 50 
-      },
-      hoje: { type: Boolean, default: true }, // Disponível para reservas de hoje
-      agendado: { type: Boolean, default: true } // Disponível para reservas agendadas
-    },
-    default: new Map()
+    type: Object, // ❌ Mudado de Map para Object para evitar erro de serialização
+    default: {}
   },
 
-  // Preços base padrão (compatibilidade com Room.js atual)
+  // ✅ PREÇOS BASE SEM VALORES PADRÃO HARDCODED
   precosBase: {
     '4h': {
       type: Number,
       min: [0, 'Preço não pode ser negativo'],
-      default: 50.00
+      required: true // ❌ Tornado obrigatório, sem default
     },
     '6h': {
       type: Number,
       min: [0, 'Preço não pode ser negativo'],
-      default: 70.00
+      required: true // ❌ Tornado obrigatório, sem default
     },
     '12h': {
       type: Number,
       min: [0, 'Preço não pode ser negativo'],
-      default: 100.00
+      required: true // ❌ Tornado obrigatório, sem default
     },
     'daily': {
       type: Number,
       min: [0, 'Preço não pode ser negativo'],
-      default: 150.00
+      required: true // ❌ Tornado obrigatório, sem default
     }
   },
 
@@ -137,12 +127,6 @@ const roomTypeSchema = new mongoose.Schema({
       ret.id = ret.id || ret._id;
       delete ret._id;
       delete ret.__v;
-      
-      // Converter Map para Object para JSON
-      if (ret.periodosConfig) {
-        ret.periodosConfig = Object.fromEntries(ret.periodosConfig);
-      }
-      
       return ret;
     }
   }
@@ -154,27 +138,9 @@ roomTypeSchema.pre('save', function(next) {
   next();
 });
 
-// ✅ MÉTODOS DE INSTÂNCIA
+// ✅ MÉTODOS DE INSTÂNCIA SIMPLIFICADOS
 roomTypeSchema.methods.getPrecoPorPeriodo = function(periodoId) {
-  const config = this.periodosConfig.get(periodoId);
-  if (config && config.ativo) {
-    return config.preco;
-  }
-  
-  // Fallback para preços base
-  return this.precosBase[periodoId] || 50.00;
-};
-
-roomTypeSchema.methods.isPeriodoAtivo = function(periodoId) {
-  const config = this.periodosConfig.get(periodoId);
-  return config ? config.ativo : false;
-};
-
-roomTypeSchema.methods.isPeriodoDisponivelPara = function(periodoId, contexto) {
-  const config = this.periodosConfig.get(periodoId);
-  if (!config || !config.ativo) return false;
-  
-  return contexto === 'hoje' ? config.hoje : config.agendado;
+  return this.precosBase[periodoId] || 0;
 };
 
 // ✅ MÉTODOS ESTÁTICOS
@@ -186,50 +152,57 @@ roomTypeSchema.statics.findByIds = function(ids) {
   return this.find({ id: { $in: ids }, active: true });
 };
 
-// ✅ CRIAR TIPOS PADRÃO SE NÃO EXISTIREM
+// ✅ CRIAR TIPOS PADRÃO SEM PREÇOS HARDCODED - APENAS ESTRUTURA
 roomTypeSchema.statics.criarTiposPadrao = async function() {
   try {
     const count = await this.countDocuments();
     
     if (count === 0) {
-      console.log('🏷️ Criando tipos de quarto padrão...');
+      console.log('🏷️ Criando estrutura de tipos padrão...');
+      console.log('⚠️  ATENÇÃO: Você precisará definir os preços manualmente!');
       
-      const tiposPadrao = [
+      // ❌ REMOVIDO: Preços hardcoded
+      // ✅ ADICIONADO: Apenas estrutura básica, preços devem ser definidos manualmente
+      const tiposEstrutura = [
         {
           id: 'standard',
           nome: 'Standard',
-          precosBase: { '4h': 50, '6h': 70, '12h': 100, 'daily': 150 },
           order: 1,
-          descricao: 'Quarto padrão com comodidades básicas'
+          descricao: 'Quarto padrão - DEFINA OS PREÇOS!'
         },
         {
-          id: 'premium',
+          id: 'premium', 
           nome: 'Premium',
-          precosBase: { '4h': 70, '6h': 90, '12h': 120, 'daily': 180 },
           order: 2,
-          descricao: 'Quarto premium com comodidades superiores'
+          descricao: 'Quarto premium - DEFINA OS PREÇOS!'
         },
         {
           id: 'luxo',
-          nome: 'Luxo',
-          precosBase: { '4h': 100, '6h': 130, '12h': 180, 'daily': 250 },
+          nome: 'Luxo', 
           order: 3,
-          descricao: 'Quarto de luxo com máximo conforto'
+          descricao: 'Quarto de luxo - DEFINA OS PREÇOS!'
         },
         {
           id: 'suite',
           nome: 'Suite',
-          precosBase: { '4h': 150, '6h': 200, '12h': 280, 'daily': 350 },
           order: 4,
-          descricao: 'Suite presidencial com todos os luxos'
+          descricao: 'Suite presidencial - DEFINA OS PREÇOS!'
         }
       ];
       
-      await this.insertMany(tiposPadrao);
-      console.log('✅ Tipos padrão criados com sucesso');
+      console.log('⚠️  Tipos criados SEM preços - você deve definir os preços via API!');
+      return { 
+        success: false, 
+        message: 'Tipos estruturais criados. Defina os preços via POST /api/room-types',
+        tiposDisponiveis: tiposEstrutura 
+      };
+    } else {
+      console.log('✅ Tipos já existem no banco');
+      return { success: true, message: 'Tipos já existem' };
     }
   } catch (error) {
-    console.error('❌ Erro ao criar tipos padrão:', error);
+    console.error('❌ Erro ao verificar tipos:', error);
+    throw error;
   }
 };
 
