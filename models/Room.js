@@ -1,7 +1,6 @@
-// backend/models/Room.js - MODELO MELHORADO COM TIPOS DINÂMICOS
+// models/Room.js - MODELO CORRIGIDO SEM MAP
 const mongoose = require('mongoose');
 
-// ✅ SCHEMA FLEXÍVEL E COMPLETO
 const roomSchema = new mongoose.Schema({
   // ✅ CAMPOS OBRIGATÓRIOS
   number: {
@@ -17,7 +16,7 @@ const roomSchema = new mongoose.Schema({
     }
   },
 
-  // ✅ TIPO FLEXÍVEL - AGORA ACEITA QUALQUER STRING
+  // ✅ TIPO FLEXÍVEL
   type: {
     type: String,
     required: [true, 'Tipo do quarto é obrigatório'],
@@ -26,7 +25,7 @@ const roomSchema = new mongoose.Schema({
     default: 'standard',
     validate: {
       validator: function(v) {
-        return v.length >= 2; // Pelo menos 2 caracteres
+        return v.length >= 2;
       },
       message: 'Tipo deve ter pelo menos 2 caracteres'
     }
@@ -42,7 +41,6 @@ const roomSchema = new mongoose.Schema({
     default: 'available'
   },
 
-  // ✅ CAMPOS OPCIONAIS COM DEFAULTS
   capacity: {
     type: Number,
     required: [true, 'Capacidade é obrigatória'],
@@ -56,26 +54,31 @@ const roomSchema = new mongoose.Schema({
     required: [true, 'Andar é obrigatório'],
     validate: {
       validator: function(v) {
-        return /^[1-9]$/.test(v); // 1 dígito: 1, 2, 3, etc.
+        return /^[1-9]$/.test(v);
       },
       message: 'Andar deve ser um número de 1 a 9'
     }
   },
 
-  // ✅ PREÇOS DINÂMICOS - AGORA SUPORTA QUALQUER PERÍODO
+  // ✅ PREÇOS COMO OBJECT EM VEZ DE MAP
   prices: {
-    type: Map,
-    of: {
-      type: Number,
-      min: [0, 'Preço não pode ser negativo']
-    },
+    type: Object,
     default: function() {
-      return new Map([
-        ['4h', 50.00],
-        ['6h', 70.00],
-        ['12h', 100.00],
-        ['daily', 150.00]
-      ]);
+      return {
+        '4h': 50.00,
+        '6h': 70.00,
+        '12h': 100.00,
+        'daily': 150.00
+      };
+    },
+    validate: {
+      validator: function(prices) {
+        // Verificar se todos os valores são números positivos
+        return Object.values(prices).every(price => 
+          typeof price === 'number' && price >= 0
+        );
+      },
+      message: 'Todos os preços devem ser números não negativos'
     }
   },
 
@@ -125,7 +128,6 @@ const roomSchema = new mongoose.Schema({
     default: ['wifi', 'ar_condicionado', 'tv'],
     validate: {
       validator: function(amenities) {
-        // Amenidades válidas
         const validAmenities = [
           'wifi', 'ar_condicionado', 'tv', 'frigobar', 'cofre', 
           'banheira', 'varanda', 'cama_king', 'cama_queen', 
@@ -137,20 +139,18 @@ const roomSchema = new mongoose.Schema({
     }
   },
 
-  // ✅ MOTIVO DE MANUTENÇÃO
   maintenanceReason: {
     type: String,
     trim: true,
     maxlength: [100, 'Motivo não pode ter mais de 100 caracteres']
   },
 
-  // ✅ CAMPOS DE CONTROLE
   isActive: {
     type: Boolean,
     default: true
   },
 
-  // ✅ CAMPOS DE AUDITORIA
+  // ✅ AUDITORIA
   createdAt: {
     type: Date,
     default: Date.now
@@ -171,31 +171,17 @@ const roomSchema = new mongoose.Schema({
     ref: 'User'
   }
 }, {
-  // ✅ OPÇÕES DO SCHEMA
   timestamps: true,
   
-  // ✅ TRANSFORMAÇÃO DO JSON
   toJSON: {
     transform: function(doc, ret) {
       ret.id = ret._id;
       delete ret._id;
       delete ret.__v;
       
-      // Converter Map para Object para JSON
-      if (ret.prices) {
-        ret.prices = Object.fromEntries(ret.prices);
-      }
-      
+      // ✅ NÃO PRECISA CONVERTER MAP MAIS (agora é Object)
       return ret;
     }
-  },
-
-  // ✅ ÍNDICES PARA PERFORMANCE
-  index: {
-    number: 1,
-    floor: 1,
-    status: 1,
-    type: 1
   }
 });
 
@@ -210,8 +196,8 @@ roomSchema.pre('save', function(next) {
   this.updatedAt = new Date();
   
   // Garantir que o preço base esteja sincronizado
-  if (this.prices && this.prices.size > 0) {
-    this.price = this.prices.get('4h') || this.prices.get('daily') || 50.00;
+  if (this.prices && Object.keys(this.prices).length > 0) {
+    this.price = this.prices['4h'] || this.prices['daily'] || 50.00;
   }
   
   next();
@@ -223,8 +209,8 @@ roomSchema.methods.isAvailable = function() {
 };
 
 roomSchema.methods.getPriceForPeriod = function(period) {
-  if (this.prices && this.prices.has(period)) {
-    return this.prices.get(period);
+  if (this.prices && this.prices[period]) {
+    return this.prices[period];
   }
   return this.price || 50.00;
 };
@@ -238,12 +224,10 @@ roomSchema.methods.getFloorName = function() {
   return floorNames[this.floor] || `${this.floor}º Andar`;
 };
 
-// ✅ NOVO: VERIFICAR SE PERÍODO ESTÁ DISPONÍVEL
 roomSchema.methods.hasPeriod = function(periodId) {
   return this.periods.some(p => p.id === periodId && p.ativo);
 };
 
-// ✅ NOVO: OBTER PERÍODO ESPECÍFICO
 roomSchema.methods.getPeriod = function(periodId) {
   return this.periods.find(p => p.id === periodId);
 };
@@ -262,59 +246,56 @@ roomSchema.statics.findByType = function(type) {
 };
 
 roomSchema.statics.getStats = async function() {
-  const stats = await this.aggregate([
-    {
-      $group: {
-        _id: null,
-        total: { $sum: 1 },
-        available: {
-          $sum: {
-            $cond: [{ $eq: ['$status', 'available'] }, 1, 0]
-          }
-        },
-        occupied: {
-          $sum: {
-            $cond: [{ $eq: ['$status', 'occupied'] }, 1, 0]
-          }
-        },
-        maintenance: {
-          $sum: {
-            $cond: [{ $eq: ['$status', 'maintenance'] }, 1, 0]
-          }
-        },
-        cleaning: {
-          $sum: {
-            $cond: [{ $eq: ['$status', 'cleaning'] }, 1, 0]
-          }
-        },
-        byFloor: {
-          $push: {
-            floor: '$floor',
-            count: 1
-          }
-        },
-        byType: {
-          $push: {
-            type: '$type',
-            count: 1
+  try {
+    const stats = await this.aggregate([
+      {
+        $group: {
+          _id: null,
+          total: { $sum: 1 },
+          available: {
+            $sum: {
+              $cond: [{ $eq: ['$status', 'available'] }, 1, 0]
+            }
+          },
+          occupied: {
+            $sum: {
+              $cond: [{ $eq: ['$status', 'occupied'] }, 1, 0]
+            }
+          },
+          maintenance: {
+            $sum: {
+              $cond: [{ $eq: ['$status', 'maintenance'] }, 1, 0]
+            }
+          },
+          cleaning: {
+            $sum: {
+              $cond: [{ $eq: ['$status', 'cleaning'] }, 1, 0]
+            }
           }
         }
       }
-    }
-  ]);
+    ]);
 
-  return stats[0] || {
-    total: 0,
-    available: 0,
-    occupied: 0,
-    maintenance: 0,
-    cleaning: 0,
-    byFloor: [],
-    byType: []
-  };
+    return stats[0] || {
+      total: 0,
+      available: 0,
+      occupied: 0,
+      maintenance: 0,
+      cleaning: 0
+    };
+  } catch (error) {
+    console.error('❌ Erro ao obter estatísticas de quartos:', error);
+    return {
+      total: 0,
+      available: 0,
+      occupied: 0,
+      maintenance: 0,
+      cleaning: 0
+    };
+  }
 };
 
-// ✅ ÍNDICES COMPOSTOS PARA QUERIES FREQUENTES
+// ✅ ÍNDICES
 roomSchema.index({ floor: 1, status: 1 });
 roomSchema.index({ type: 1, status: 1 });
 roomSchema.index({ number: 1 }, { unique: true });
