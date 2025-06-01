@@ -92,6 +92,10 @@ try {
   app.use('/api/rooms', require('./routes/rooms'));
   console.log('✅ Rota /api/rooms registrada');
 
+  // ✅ROTA DE TIPOS DE QUARTOS
+  app.use('/api/room-types', require('./routes/roomTypes'));
+   console.log('✅ Rota /api/room-types registrada');
+
   // ✅ NOVA ROTA DE PERÍODOS
   app.use('/api/periods', require('./routes/periods'));
   console.log('✅ Rota /api/periods registrada');
