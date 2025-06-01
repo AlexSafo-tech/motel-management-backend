@@ -214,6 +214,50 @@ const startServer = async () => {
   }
 };
 
+// ✅ ROTA DE DEBUG - Adicionar temporariamente no server.js
+app.get('/debug/room-types', async (req, res) => {
+  try {
+    const RoomType = require('./models/RoomType');
+    
+    // Buscar TODOS os tipos (ativos e inativos)
+    const allTypes = await RoomType.find({});
+    
+    // Buscar apenas ativos
+    const activeTypes = await RoomType.find({ 'disponibilidade.ativo': true });
+    
+    // Verificar se método funciona
+    let methodTest = null;
+    try {
+      methodTest = await RoomType.findAtivos();
+    } catch (error) {
+      methodTest = { error: error.message };
+    }
+    
+    res.json({
+      success: true,
+      debug: {
+        totalTypes: allTypes.length,
+        activeTypes: activeTypes.length,
+        allTypes: allTypes.map(t => ({
+          id: t.id,
+          nome: t.nome,
+          ativo: t.disponibilidade?.ativo,
+          createdAt: t.createdAt
+        })),
+        activeTypesData: activeTypes,
+        methodTest: methodTest
+      }
+    });
+    
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      stack: error.stack
+    });
+  }
+});
+
 // ✅ TRATAMENTO DE SINAIS
 process.on('SIGTERM', () => {
   console.log('🛑 SIGTERM recebido. Encerrando servidor...');
