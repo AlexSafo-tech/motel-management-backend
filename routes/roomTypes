@@ -140,48 +140,103 @@ router.post('/', authenticate, async (req, res) => {
   }
 });
 
-// ✅ PUT /api/room-types/:id - Atualizar tipo (COM AUTH)
+// ✅ PUT /api/room-types/:id - Atualizar tipo (VERSÃO CORRIGIDA)
 router.put('/:id', authenticate, async (req, res) => {
   try {
     console.log(`📤 PUT /api/room-types/${req.params.id}`);
-    console.log('📦 Dados para atualizar:', req.body);
+    console.log('📦 Dados recebidos:', JSON.stringify(req.body, null, 2));
     
-    const { nome, precosPorPeriodo, amenidades, descricao, configuracao, disponibilidade } = req.body;
+    const { nome, precosPorPeriodo, amenidades, descricao, configuracao, disponibilidade, ativo, active } = req.body;
 
+    // ✅ BUSCAR TIPO EXISTENTE
     const roomType = await RoomType.findOne({ id: req.params.id });
     if (!roomType) {
+      console.log(`❌ Tipo não encontrado: ${req.params.id}`);
       return res.status(404).json({
         success: false,
         message: 'Tipo de quarto não encontrado'
       });
     }
 
-    // Atualizar campos
+    console.log('📋 Tipo encontrado:', roomType.nome);
+
+    // ✅ ATUALIZAR CAMPOS COM VALIDAÇÃO
     if (nome && nome.trim()) {
       roomType.nome = nome.trim();
+      console.log('✅ Nome atualizado:', roomType.nome);
     }
-    if (precosPorPeriodo) {
-      roomType.precosPorPeriodo = { ...roomType.precosPorPeriodo, ...precosPorPeriodo };
+
+    // ✅ ATUALIZAR PREÇOS POR PERÍODO (PRINCIPAL)
+    if (precosPorPeriodo && typeof precosPorPeriodo === 'object') {
+      // Verificar se há preços válidos
+      const precosValidos = Object.entries(precosPorPeriodo).filter(([_, preco]) => 
+        typeof preco === 'number' && preco > 0
+      );
+      
+      if (precosValidos.length > 0) {
+        roomType.precosPorPeriodo = { ...precosPorPeriodo };
+        console.log('✅ Preços atualizados:', roomType.precosPorPeriodo);
+        console.log(`📊 ${precosValidos.length} preços válidos recebidos`);
+      } else {
+        console.log('⚠️ Nenhum preço válido encontrado nos dados recebidos');
+        return res.status(400).json({
+          success: false,
+          message: 'É necessário pelo menos um preço válido (maior que zero)'
+        });
+      }
+    } else {
+      console.log('⚠️ Campo precosPorPeriodo não fornecido ou inválido');
     }
-    if (amenidades) {
+
+    // ✅ ATUALIZAR OUTROS CAMPOS
+    if (amenidades && Array.isArray(amenidades)) {
       roomType.amenidades = amenidades;
+      console.log('✅ Amenidades atualizadas:', roomType.amenidades);
     }
+
     if (descricao !== undefined) {
       roomType.descricao = descricao;
+      console.log('✅ Descrição atualizada');
     }
-    if (configuracao) {
+
+    if (configuracao && typeof configuracao === 'object') {
       roomType.configuracao = { ...roomType.configuracao, ...configuracao };
+      console.log('✅ Configuração atualizada:', roomType.configuracao);
     }
-    if (disponibilidade) {
+
+    if (disponibilidade && typeof disponibilidade === 'object') {
       roomType.disponibilidade = { ...roomType.disponibilidade, ...disponibilidade };
+      console.log('✅ Disponibilidade atualizada:', roomType.disponibilidade);
+    }
+
+    // ✅ CAMPOS DE ATIVAÇÃO
+    if (ativo !== undefined) {
+      roomType.ativo = ativo;
+      roomType.active = ativo;
+      if (!roomType.disponibilidade) roomType.disponibilidade = {};
+      roomType.disponibilidade.ativo = ativo;
+      console.log('✅ Status ativo atualizado:', ativo);
+    }
+
+    if (active !== undefined) {
+      roomType.active = active;
+      roomType.ativo = active;
+      if (!roomType.disponibilidade) roomType.disponibilidade = {};
+      roomType.disponibilidade.ativo = active;
+      console.log('✅ Status active atualizado:', active);
     }
     
+    // ✅ AUDITORIA
     roomType.atualizadoPor = req.user?.id || req.user?._id;
 
+    // ✅ SALVAR NO BANCO
+    console.log('💾 Salvando no banco de dados...');
     await roomType.save();
 
-    console.log('✅ Tipo atualizado:', roomType.id);
+    console.log('✅ Tipo salvo com sucesso no banco');
+    console.log('📊 Preços finais salvos:', roomType.precosPorPeriodo);
 
+    // ✅ RESPOSTA DE SUCESSO
     res.json({
       success: true,
       data: roomType,
@@ -193,21 +248,27 @@ router.put('/:id', authenticate, async (req, res) => {
     
     if (error.name === 'ValidationError') {
       const errors = Object.values(error.errors).map(err => err.message);
+      console.error('❌ Erros de validação:', errors);
       res.status(400).json({
         success: false,
         message: 'Dados inválidos',
         errors: errors
       });
+    } else if (error.name === 'CastError') {
+      console.error('❌ Erro de tipo de dados:', error.message);
+      res.status(400).json({
+        success: false,
+        message: 'Formato de dados inválido'
+      });
     } else {
       res.status(500).json({
         success: false,
-        message: 'Erro ao atualizar tipo',
+        message: 'Erro interno do servidor ao atualizar tipo',
         error: error.message
       });
     }
   }
 });
-
 // ✅ DELETE /api/room-types/:id - Deletar tipo (COM AUTH)
 router.delete('/:id', authenticate, async (req, res) => {
   try {
