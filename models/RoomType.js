@@ -1,4 +1,4 @@
-// models/RoomType.js - MODELO CORRIGIDO SEM PREÇOS HARDCODED
+// models/RoomType.js - TIPOS DE QUARTO COM PREÇOS POR PERÍODO
 const mongoose = require('mongoose');
 
 const roomTypeSchema = new mongoose.Schema({
@@ -20,47 +20,34 @@ const roomTypeSchema = new mongoose.Schema({
     type: String,
     required: [true, 'Nome do tipo é obrigatório'],
     trim: true,
-    maxlength: [50, 'Nome não pode ter mais de 50 caracteres'],
+    maxlength: [50, 'Nome não pode ter mais de 50 caracteres']
+  },
+
+  // ✅ PREÇOS DINÂMICOS POR PERÍODO
+  precosPorPeriodo: {
+    type: Object, // { "4h": 55, "6h": 70, "12h": 90, "diaria": 120, "pernoite": 100 }
+    default: {},
     validate: {
-      validator: function(v) {
-        return v.length >= 2;
+      validator: function(precos) {
+        // Verificar se todos os valores são números positivos
+        return Object.values(precos).every(preco => 
+          typeof preco === 'number' && preco >= 0
+        );
       },
-      message: 'Nome deve ter pelo menos 2 caracteres'
+      message: 'Todos os preços devem ser números não negativos'
     }
   },
 
-  // ✅ CONFIGURAÇÃO DE PERÍODOS CORRIGIDA
-  periodosConfig: {
-    type: Object, // ❌ Mudado de Map para Object para evitar erro de serialização
-    default: {}
-  },
-
-  // ✅ PREÇOS BASE SEM VALORES PADRÃO HARDCODED
+  // ✅ PREÇOS BASE PARA COMPATIBILIDADE (DEPRECATED)
   precosBase: {
-    '4h': {
-      type: Number,
-      min: [0, 'Preço não pode ser negativo'],
-      required: true // ❌ Tornado obrigatório, sem default
-    },
-    '6h': {
-      type: Number,
-      min: [0, 'Preço não pode ser negativo'],
-      required: true // ❌ Tornado obrigatório, sem default
-    },
-    '12h': {
-      type: Number,
-      min: [0, 'Preço não pode ser negativo'],
-      required: true // ❌ Tornado obrigatório, sem default
-    },
-    'daily': {
-      type: Number,
-      min: [0, 'Preço não pode ser negativo'],
-      required: true // ❌ Tornado obrigatório, sem default
-    }
+    '4h': { type: Number, min: 0 },
+    '6h': { type: Number, min: 0 },
+    '12h': { type: Number, min: 0 },
+    'daily': { type: Number, min: 0 }
   },
 
-  // Amenidades padrão para este tipo
-  amenidadesPadrao: {
+  // Amenidades incluídas neste tipo
+  amenidades: {
     type: [String],
     default: ['wifi', 'ar_condicionado', 'tv'],
     validate: {
@@ -68,7 +55,8 @@ const roomTypeSchema = new mongoose.Schema({
         const validAmenities = [
           'wifi', 'ar_condicionado', 'tv', 'frigobar', 'cofre', 
           'banheira', 'varanda', 'cama_king', 'cama_queen', 
-          'mesa', 'cadeira', 'espelho', 'secador'
+          'mesa', 'cadeira', 'espelho', 'secador', 'netflix',
+          'hidromassagem', 'som_bluetooth', 'luzes_led'
         ];
         return amenities.every(amenity => validAmenities.includes(amenity));
       },
@@ -76,46 +64,62 @@ const roomTypeSchema = new mongoose.Schema({
     }
   },
 
-  // Descrição do tipo
+  // Configurações do tipo
+  configuracao: {
+    capacidadeMaxima: { type: Number, min: 1, max: 10, default: 2 },
+    metrosQuadrados: { type: Number, min: 1 },
+    andar: { type: String },
+    vista: { 
+      type: String, 
+      enum: ['jardim', 'piscina', 'rua', 'interna', 'panoramica'], 
+      default: 'interna' 
+    },
+    acessibilidade: { type: Boolean, default: false }
+  },
+
+  // Descrição e marketing
   descricao: {
     type: String,
     trim: true,
-    maxlength: [200, 'Descrição não pode ter mais de 200 caracteres'],
-    default: function() {
-      return `Quarto tipo ${this.nome}`;
-    }
+    maxlength: [500, 'Descrição não pode ter mais de 500 caracteres']
   },
 
-  // Controle de ativação
-  active: {
-    type: Boolean,
-    default: true
+  descricaoDetalhada: {
+    type: String,
+    trim: true,
+    maxlength: [1000, 'Descrição detalhada não pode ter mais de 1000 caracteres']
+  },
+
+  // Imagens
+  imagens: {
+    principal: { type: String }, // URL da imagem principal
+    galeria: [String], // Array de URLs
+    thumb: { type: String } // Thumbnail para listagens
+  },
+
+  // Controles de disponibilidade
+  disponibilidade: {
+    ativo: { type: Boolean, default: true },
+    aceitaReservaHoje: { type: Boolean, default: true },
+    aceitaReservaAgendada: { type: Boolean, default: true },
+    minimoAntecedencia: { type: Number, default: 0 }, // horas
+    maximoAntecedencia: { type: Number, default: 720 } // horas (30 dias)
   },
 
   // Ordem de exibição
-  order: {
+  ordem: {
     type: Number,
     default: 0,
     min: [0, 'Ordem não pode ser negativa']
   },
 
   // Auditoria
-  createdAt: {
-    type: Date,
-    default: Date.now
-  },
-
-  updatedAt: {
-    type: Date,
-    default: Date.now
-  },
-
-  createdBy: {
+  criadoPor: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
   },
 
-  updatedBy: {
+  atualizadoPor: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
   }
@@ -134,81 +138,151 @@ const roomTypeSchema = new mongoose.Schema({
 
 // ✅ MIDDLEWARE PRE-SAVE
 roomTypeSchema.pre('save', function(next) {
-  this.updatedAt = new Date();
+  // Sincronizar preços base com preços por período (compatibilidade)
+  if (this.precosPorPeriodo) {
+    this.precosBase = {
+      '4h': this.precosPorPeriodo['4h'] || 0,
+      '6h': this.precosPorPeriodo['6h'] || 0, 
+      '12h': this.precosPorPeriodo['12h'] || 0,
+      'daily': this.precosPorPeriodo['diaria'] || 0
+    };
+  }
+  
   next();
 });
 
-// ✅ MÉTODOS DE INSTÂNCIA SIMPLIFICADOS
+// ✅ MÉTODOS DE INSTÂNCIA
 roomTypeSchema.methods.getPrecoPorPeriodo = function(periodoId) {
-  return this.precosBase[periodoId] || 0;
+  return this.precosPorPeriodo[periodoId] || 0;
+};
+
+roomTypeSchema.methods.setPrecoPorPeriodo = function(periodoId, preco) {
+  if (!this.precosPorPeriodo) {
+    this.precosPorPeriodo = {};
+  }
+  this.precosPorPeriodo[periodoId] = preco;
+};
+
+roomTypeSchema.methods.temPrecoDefinido = function(periodoId) {
+  return this.precosPorPeriodo && this.precosPorPeriodo[periodoId] > 0;
+};
+
+roomTypeSchema.methods.getPrecosPorPeriodo = function() {
+  return this.precosPorPeriodo || {};
 };
 
 // ✅ MÉTODOS ESTÁTICOS
-roomTypeSchema.statics.findActive = function() {
-  return this.find({ active: true }).sort({ order: 1, nome: 1 });
+roomTypeSchema.statics.findAtivos = function() {
+  return this.find({ 'disponibilidade.ativo': true }).sort({ ordem: 1, nome: 1 });
 };
 
-roomTypeSchema.statics.findByIds = function(ids) {
-  return this.find({ id: { $in: ids }, active: true });
+roomTypeSchema.statics.findComPrecos = function() {
+  return this.find({ 
+    'disponibilidade.ativo': true,
+    precosPorPeriodo: { $exists: true, $ne: {} }
+  }).sort({ ordem: 1 });
 };
 
-// ✅ CRIAR TIPOS PADRÃO SEM PREÇOS HARDCODED - APENAS ESTRUTURA
+// ✅ CRIAR TIPOS PADRÃO COM PREÇOS BASE
 roomTypeSchema.statics.criarTiposPadrao = async function() {
   try {
     const count = await this.countDocuments();
     
     if (count === 0) {
-      console.log('🏷️ Criando estrutura de tipos padrão...');
-      console.log('⚠️  ATENÇÃO: Você precisará definir os preços manualmente!');
+      console.log('🏷️ Criando tipos de quarto padrão com preços base...');
       
-      // ❌ REMOVIDO: Preços hardcoded
-      // ✅ ADICIONADO: Apenas estrutura básica, preços devem ser definidos manualmente
-      const tiposEstrutura = [
+      const tiposPadrao = [
         {
           id: 'standard',
           nome: 'Standard',
-          order: 1,
-          descricao: 'Quarto padrão - DEFINA OS PREÇOS!'
+          precosPorPeriodo: {
+            '4h': 55,
+            '6h': 70, 
+            '12h': 90,
+            'diaria': 120,
+            'pernoite': 100
+          },
+          configuracao: {
+            capacidadeMaxima: 2,
+            metrosQuadrados: 25
+          },
+          descricao: 'Quarto padrão com comodidades essenciais',
+          ordem: 1
         },
         {
-          id: 'premium', 
-          nome: 'Premium',
-          order: 2,
-          descricao: 'Quarto premium - DEFINA OS PREÇOS!'
+          id: 'premium',
+          nome: 'Premium', 
+          precosPorPeriodo: {
+            '4h': 75,
+            '6h': 95,
+            '12h': 115, 
+            'diaria': 150,
+            'pernoite': 130
+          },
+          configuracao: {
+            capacidadeMaxima: 2,
+            metrosQuadrados: 35
+          },
+          amenidades: ['wifi', 'ar_condicionado', 'tv', 'frigobar', 'netflix'],
+          descricao: 'Quarto premium com amenidades superiores',
+          ordem: 2
         },
         {
           id: 'luxo',
-          nome: 'Luxo', 
-          order: 3,
-          descricao: 'Quarto de luxo - DEFINA OS PREÇOS!'
+          nome: 'Luxo',
+          precosPorPeriodo: {
+            '4h': 100,
+            '6h': 130,
+            '12h': 160,
+            'diaria': 200, 
+            'pernoite': 170
+          },
+          configuracao: {
+            capacidadeMaxima: 2,
+            metrosQuadrados: 45,
+            vista: 'jardim'
+          },
+          amenidades: ['wifi', 'ar_condicionado', 'tv', 'frigobar', 'netflix', 'hidromassagem', 'som_bluetooth'],
+          descricao: 'Quarto de luxo com máximo conforto e vista privilegiada',
+          ordem: 3
         },
         {
           id: 'suite',
-          nome: 'Suite',
-          order: 4,
-          descricao: 'Suite presidencial - DEFINA OS PREÇOS!'
+          nome: 'Suite Presidential',
+          precosPorPeriodo: {
+            '4h': 150,
+            '6h': 200,
+            '12h': 250,
+            'diaria': 300,
+            'pernoite': 250
+          },
+          configuracao: {
+            capacidadeMaxima: 4,
+            metrosQuadrados: 60,
+            vista: 'panoramica'
+          },
+          amenidades: ['wifi', 'ar_condicionado', 'tv', 'frigobar', 'netflix', 'hidromassagem', 'som_bluetooth', 'varanda', 'luzes_led'],
+          descricao: 'Suite presidencial com todos os luxos e vista panorâmica',
+          ordem: 4
         }
       ];
       
-      console.log('⚠️  Tipos criados SEM preços - você deve definir os preços via API!');
-      return { 
-        success: false, 
-        message: 'Tipos estruturais criados. Defina os preços via POST /api/room-types',
-        tiposDisponiveis: tiposEstrutura 
-      };
+      await this.insertMany(tiposPadrao);
+      console.log('✅ Tipos padrão criados com preços base');
+      return tiposPadrao;
     } else {
-      console.log('✅ Tipos já existem no banco');
-      return { success: true, message: 'Tipos já existem' };
+      console.log('✅ Tipos já existem');
+      return await this.findAtivos();
     }
   } catch (error) {
-    console.error('❌ Erro ao verificar tipos:', error);
+    console.error('❌ Erro ao criar tipos padrão:', error);
     throw error;
   }
 };
 
 // ✅ ÍNDICES
 roomTypeSchema.index({ id: 1 }, { unique: true });
-roomTypeSchema.index({ active: 1, order: 1 });
+roomTypeSchema.index({ 'disponibilidade.ativo': 1, ordem: 1 });
 roomTypeSchema.index({ nome: 1 });
 
 module.exports = mongoose.models.RoomType || mongoose.model('RoomType', roomTypeSchema);
