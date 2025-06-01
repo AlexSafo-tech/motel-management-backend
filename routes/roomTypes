@@ -1,15 +1,16 @@
-// routes/roomTypes.js - VERSÃO SEM AUTH PARA TESTE
+// routes/roomTypes.js - VERSÃO COM AUTENTICAÇÃO REATIVADA
 const express = require('express');
 const router = express.Router();
 const RoomType = require('../models/RoomType');
-// const { authenticate } = require('../middleware/auth'); // ❌ COMENTADO TEMPORARIAMENTE
+const { authenticate } = require('../middleware/auth'); // ✅ REATIVADO
 
-// ✅ GET /api/room-types - Listar todos os tipos (SEM AUTH)
-router.get('/', async (req, res) => {
+// ✅ GET /api/room-types - Listar todos os tipos (COM AUTH)
+router.get('/', authenticate, async (req, res) => {
   try {
     console.log('📥 GET /api/room-types - Listando tipos de quarto...');
     
-    const roomTypes = await RoomType.findActive();
+    // ✅ CORRIGIDO: Usar findAtivos em vez de findActive
+    const roomTypes = await RoomType.findAtivos();
     
     console.log(`✅ ${roomTypes.length} tipos encontrados`);
     
@@ -28,14 +29,15 @@ router.get('/', async (req, res) => {
   }
 });
 
-// ✅ GET /api/room-types/:id - Buscar tipo específico (SEM AUTH)
-router.get('/:id', async (req, res) => {
+// ✅ GET /api/room-types/:id - Buscar tipo específico (COM AUTH)
+router.get('/:id', authenticate, async (req, res) => {
   try {
     console.log(`📥 GET /api/room-types/${req.params.id}`);
     
+    // ✅ CORRIGIDO: Usar disponibilidade.ativo em vez de active
     const roomType = await RoomType.findOne({ 
       id: req.params.id, 
-      active: true 
+      'disponibilidade.ativo': true 
     });
     
     if (!roomType) {
@@ -60,13 +62,13 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// ✅ POST /api/room-types - Criar novo tipo (SEM AUTH)
-router.post('/', async (req, res) => {
+// ✅ POST /api/room-types - Criar novo tipo (COM AUTH)
+router.post('/', authenticate, async (req, res) => {
   try {
     console.log('📤 POST /api/room-types - Criando novo tipo...');
     console.log('📦 Dados recebidos:', req.body);
     
-    const { nome, periodosConfig, precosBase, amenidadesPadrao, descricao } = req.body;
+    const { nome, precosPorPeriodo, amenidades, descricao, configuracao } = req.body;
 
     if (!nome || !nome.trim()) {
       return res.status(400).json({
@@ -86,25 +88,20 @@ router.post('/', async (req, res) => {
       });
     }
 
-    // Buscar o maior order atual
-    const lastType = await RoomType.findOne().sort({ order: -1 });
-    const newOrder = lastType ? lastType.order + 1 : 1;
+    // Buscar a maior ordem atual
+    const lastType = await RoomType.findOne().sort({ ordem: -1 });
+    const newOrder = lastType ? lastType.ordem + 1 : 1;
 
-    // Preparar dados do tipo
+    // ✅ DADOS ATUALIZADOS PARA O NOVO MODELO
     const roomTypeData = {
       id,
       nome: nome.trim(),
-      periodosConfig: periodosConfig || new Map(),
-      precosBase: precosBase || {
-        '4h': 50.00,
-        '6h': 70.00,
-        '12h': 100.00,
-        'daily': 150.00
-      },
-      amenidadesPadrao: amenidadesPadrao || ['wifi', 'ar_condicionado', 'tv'],
+      precosPorPeriodo: precosPorPeriodo || {},
+      amenidades: amenidades || ['wifi', 'ar_condicionado', 'tv'],
       descricao: descricao || `Quarto tipo ${nome}`,
-      order: newOrder
-      // createdBy: req.user?.id // ❌ COMENTADO (sem user)
+      configuracao: configuracao || { capacidadeMaxima: 2 },
+      ordem: newOrder,
+      criadoPor: req.user?.id || req.user?._id
     };
 
     const roomType = new RoomType(roomTypeData);
@@ -143,18 +140,151 @@ router.post('/', async (req, res) => {
   }
 });
 
-// ✅ POST /api/room-types/init - Inicializar tipos padrão (SEM AUTH)
-router.post('/init', async (req, res) => {
+// ✅ PUT /api/room-types/:id - Atualizar tipo (COM AUTH)
+router.put('/:id', authenticate, async (req, res) => {
   try {
-    console.log('🏗️ POST /api/room-types/init - Inicializando tipos padrão...');
+    console.log(`📤 PUT /api/room-types/${req.params.id}`);
+    console.log('📦 Dados para atualizar:', req.body);
     
-    await RoomType.criarTiposPadrao();
+    const { nome, precosPorPeriodo, amenidades, descricao, configuracao, disponibilidade } = req.body;
 
-    const tipos = await RoomType.findActive();
+    const roomType = await RoomType.findOne({ id: req.params.id });
+    if (!roomType) {
+      return res.status(404).json({
+        success: false,
+        message: 'Tipo de quarto não encontrado'
+      });
+    }
+
+    // Atualizar campos
+    if (nome && nome.trim()) {
+      roomType.nome = nome.trim();
+    }
+    if (precosPorPeriodo) {
+      roomType.precosPorPeriodo = { ...roomType.precosPorPeriodo, ...precosPorPeriodo };
+    }
+    if (amenidades) {
+      roomType.amenidades = amenidades;
+    }
+    if (descricao !== undefined) {
+      roomType.descricao = descricao;
+    }
+    if (configuracao) {
+      roomType.configuracao = { ...roomType.configuracao, ...configuracao };
+    }
+    if (disponibilidade) {
+      roomType.disponibilidade = { ...roomType.disponibilidade, ...disponibilidade };
+    }
+    
+    roomType.atualizadoPor = req.user?.id || req.user?._id;
+
+    await roomType.save();
+
+    console.log('✅ Tipo atualizado:', roomType.id);
 
     res.json({
       success: true,
-      data: tipos,
+      data: roomType,
+      message: `Tipo "${roomType.nome}" atualizado com sucesso`
+    });
+
+  } catch (error) {
+    console.error('❌ Erro ao atualizar tipo:', error);
+    
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map(err => err.message);
+      res.status(400).json({
+        success: false,
+        message: 'Dados inválidos',
+        errors: errors
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        message: 'Erro ao atualizar tipo',
+        error: error.message
+      });
+    }
+  }
+});
+
+// ✅ DELETE /api/room-types/:id - Deletar tipo (COM AUTH)
+router.delete('/:id', authenticate, async (req, res) => {
+  try {
+    console.log(`🗑️ DELETE /api/room-types/${req.params.id}`);
+    
+    // Verificar se não é um tipo padrão
+    const protectedTypes = ['standard', 'premium', 'luxo', 'suite'];
+    if (protectedTypes.includes(req.params.id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Não é possível deletar tipos padrão'
+      });
+    }
+
+    const roomType = await RoomType.findOne({ id: req.params.id });
+    if (!roomType) {
+      return res.status(404).json({
+        success: false,
+        message: 'Tipo de quarto não encontrado'
+      });
+    }
+
+    // Verificar se há quartos usando este tipo
+    const Room = require('../models/Room');
+    const roomsWithType = await Room.countDocuments({ 
+      type: req.params.id, 
+      isActive: true 
+    });
+    
+    if (roomsWithType > 0) {
+      return res.status(400).json({
+        success: false,
+        message: `Não é possível deletar. Existem ${roomsWithType} quartos usando este tipo.`,
+        data: { roomsCount: roomsWithType }
+      });
+    }
+
+    // Soft delete
+    roomType.disponibilidade.ativo = false;
+    roomType.atualizadoPor = req.user?.id || req.user?._id;
+    await roomType.save();
+
+    console.log('✅ Tipo deletado (soft):', roomType.nome);
+
+    res.json({
+      success: true,
+      message: `Tipo "${roomType.nome}" removido com sucesso`
+    });
+
+  } catch (error) {
+    console.error('❌ Erro ao deletar tipo:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erro ao deletar tipo',
+      error: error.message
+    });
+  }
+});
+
+// ✅ POST /api/room-types/init - Inicializar tipos padrão (COM AUTH)
+router.post('/init', authenticate, async (req, res) => {
+  try {
+    console.log('🏗️ POST /api/room-types/init - Inicializando tipos padrão...');
+    
+    // Verificar se usuário é admin
+    if (req.user?.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Apenas administradores podem inicializar tipos padrão'
+      });
+    }
+
+    const tiposCriados = await RoomType.criarTiposPadrao();
+
+    res.json({
+      success: true,
+      data: tiposCriados,
       message: 'Tipos padrão inicializados com sucesso'
     });
 
