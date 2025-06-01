@@ -176,6 +176,11 @@ roomTypeSchema.statics.findAtivos = function() {
   return this.find({ 'disponibilidade.ativo': true }).sort({ ordem: 1, nome: 1 });
 };
 
+// ✅ COMPATIBILIDADE: Manter findActive para código antigo
+roomTypeSchema.statics.findActive = function() {
+  return this.findAtivos();
+};
+
 roomTypeSchema.statics.findComPrecos = function() {
   return this.find({ 
     'disponibilidade.ativo': true,
