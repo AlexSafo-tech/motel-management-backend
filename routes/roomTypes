@@ -1,0 +1,351 @@
+// routes/roomTypes.js - ROTAS PARA TIPOS DE QUARTO
+const express = require('express');
+const router = express.Router();
+const RoomType = require('../models/RoomType');
+const { authenticate } = require('../middleware/auth');
+
+// ✅ GET /api/room-types - Listar todos os tipos
+router.get('/', authenticate, async (req, res) => {
+  try {
+    console.log('📥 GET /api/room-types - Listando tipos de quarto...');
+    
+    const roomTypes = await RoomType.findActive();
+    
+    console.log(`✅ ${roomTypes.length} tipos encontrados`);
+    
+    res.json({
+      success: true,
+      data: roomTypes,
+      message: `${roomTypes.length} tipos de quarto encontrados`
+    });
+  } catch (error) {
+    console.error('❌ Erro ao buscar tipos de quarto:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erro interno do servidor',
+      error: error.message
+    });
+  }
+});
+
+// ✅ GET /api/room-types/:id - Buscar tipo específico
+router.get('/:id', authenticate, async (req, res) => {
+  try {
+    console.log(`📥 GET /api/room-types/${req.params.id}`);
+    
+    const roomType = await RoomType.findOne({ 
+      id: req.params.id, 
+      active: true 
+    });
+    
+    if (!roomType) {
+      return res.status(404).json({
+        success: false,
+        message: 'Tipo de quarto não encontrado'
+      });
+    }
+    
+    res.json({
+      success: true,
+      data: roomType,
+      message: 'Tipo encontrado'
+    });
+  } catch (error) {
+    console.error('❌ Erro ao buscar tipo:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erro interno do servidor',
+      error: error.message
+    });
+  }
+});
+
+// ✅ POST /api/room-types - Criar novo tipo
+router.post('/', authenticate, async (req, res) => {
+  try {
+    console.log('📤 POST /api/room-types - Criando novo tipo...');
+    console.log('📦 Dados recebidos:', req.body);
+    
+    const { nome, periodosConfig, precosBase, amenidadesPadrao, descricao } = req.body;
+
+    if (!nome || !nome.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Nome do tipo é obrigatório'
+      });
+    }
+
+    const id = nome.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+
+    // Verificar se já existe
+    const existingType = await RoomType.findOne({ id });
+    if (existingType) {
+      return res.status(400).json({
+        success: false,
+        message: 'Tipo de quarto já existe'
+      });
+    }
+
+    // Buscar o maior order atual
+    const lastType = await RoomType.findOne().sort({ order: -1 });
+    const newOrder = lastType ? lastType.order + 1 : 1;
+
+    // Preparar dados do tipo
+    const roomTypeData = {
+      id,
+      nome: nome.trim(),
+      periodosConfig: periodosConfig || new Map(),
+      precosBase: precosBase || {
+        '4h': 50.00,
+        '6h': 70.00,
+        '12h': 100.00,
+        'daily': 150.00
+      },
+      amenidadesPadrao: amenidadesPadrao || ['wifi', 'ar_condicionado', 'tv'],
+      descricao: descricao || `Quarto tipo ${nome}`,
+      order: newOrder,
+      createdBy: req.user?.id
+    };
+
+    const roomType = new RoomType(roomTypeData);
+    await roomType.save();
+
+    console.log('✅ Tipo criado com sucesso:', roomType.id);
+
+    res.status(201).json({
+      success: true,
+      data: roomType,
+      message: `Tipo "${nome}" criado com sucesso`
+    });
+
+  } catch (error) {
+    console.error('❌ Erro ao criar tipo:', error);
+    
+    if (error.code === 11000) {
+      res.status(400).json({
+        success: false,
+        message: 'Tipo com este ID já existe'
+      });
+    } else if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map(err => err.message);
+      res.status(400).json({
+        success: false,
+        message: 'Dados inválidos',
+        errors: errors
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        message: 'Erro ao criar tipo',
+        error: error.message
+      });
+    }
+  }
+});
+
+// ✅ PUT /api/room-types/:id - Atualizar tipo
+router.put('/:id', authenticate, async (req, res) => {
+  try {
+    console.log(`📤 PUT /api/room-types/${req.params.id}`);
+    console.log('📦 Dados para atualizar:', req.body);
+    
+    const { nome, periodosConfig, precosBase, amenidadesPadrao, descricao, active, order } = req.body;
+
+    const roomType = await RoomType.findOne({ id: req.params.id });
+    if (!roomType) {
+      return res.status(404).json({
+        success: false,
+        message: 'Tipo de quarto não encontrado'
+      });
+    }
+
+    // Atualizar campos
+    if (nome && nome.trim()) {
+      roomType.nome = nome.trim();
+    }
+    if (periodosConfig !== undefined) {
+      roomType.periodosConfig = new Map(Object.entries(periodosConfig));
+    }
+    if (precosBase) {
+      roomType.precosBase = { ...roomType.precosBase, ...precosBase };
+    }
+    if (amenidadesPadrao) {
+      roomType.amenidadesPadrao = amenidadesPadrao;
+    }
+    if (descricao !== undefined) {
+      roomType.descricao = descricao;
+    }
+    if (typeof active === 'boolean') {
+      roomType.active = active;
+    }
+    if (typeof order === 'number') {
+      roomType.order = order;
+    }
+    
+    roomType.updatedBy = req.user?.id;
+
+    await roomType.save();
+
+    console.log('✅ Tipo atualizado:', roomType.id);
+
+    res.json({
+      success: true,
+      data: roomType,
+      message: `Tipo "${roomType.nome}" atualizado com sucesso`
+    });
+
+  } catch (error) {
+    console.error('❌ Erro ao atualizar tipo:', error);
+    
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map(err => err.message);
+      res.status(400).json({
+        success: false,
+        message: 'Dados inválidos',
+        errors: errors
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        message: 'Erro ao atualizar tipo',
+        error: error.message
+      });
+    }
+  }
+});
+
+// ✅ DELETE /api/room-types/:id - Deletar tipo (soft delete)
+router.delete('/:id', authenticate, async (req, res) => {
+  try {
+    console.log(`🗑️ DELETE /api/room-types/${req.params.id}`);
+    
+    // Verificar se não é um tipo padrão
+    const protectedTypes = ['standard', 'premium', 'luxo', 'suite'];
+    if (protectedTypes.includes(req.params.id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Não é possível deletar tipos padrão'
+      });
+    }
+
+    const roomType = await RoomType.findOne({ id: req.params.id });
+    if (!roomType) {
+      return res.status(404).json({
+        success: false,
+        message: 'Tipo de quarto não encontrado'
+      });
+    }
+
+    // Verificar se há quartos usando este tipo
+    const Room = require('../models/Room');
+    const roomsWithType = await Room.countDocuments({ 
+      type: req.params.id, 
+      isActive: true 
+    });
+    
+    if (roomsWithType > 0) {
+      return res.status(400).json({
+        success: false,
+        message: `Não é possível deletar. Existem ${roomsWithType} quartos usando este tipo.`,
+        data: { roomsCount: roomsWithType }
+      });
+    }
+
+    // Soft delete
+    roomType.active = false;
+    roomType.updatedBy = req.user?.id;
+    await roomType.save();
+
+    console.log('✅ Tipo deletado (soft):', roomType.nome);
+
+    res.json({
+      success: true,
+      message: `Tipo "${roomType.nome}" removido com sucesso`
+    });
+
+  } catch (error) {
+    console.error('❌ Erro ao deletar tipo:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erro ao deletar tipo',
+      error: error.message
+    });
+  }
+});
+
+// ✅ PATCH /api/room-types/:id/order - Atualizar ordem
+router.patch('/:id/order', authenticate, async (req, res) => {
+  try {
+    console.log(`🔄 PATCH /api/room-types/${req.params.id}/order`);
+    
+    const { order } = req.body;
+    
+    if (typeof order !== 'number' || order < 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Ordem deve ser um número não negativo'
+      });
+    }
+
+    const roomType = await RoomType.findOne({ id: req.params.id });
+    if (!roomType) {
+      return res.status(404).json({
+        success: false,
+        message: 'Tipo não encontrado'
+      });
+    }
+
+    roomType.order = order;
+    roomType.updatedBy = req.user?.id;
+    await roomType.save();
+
+    res.json({
+      success: true,
+      data: roomType,
+      message: 'Ordem atualizada com sucesso'
+    });
+
+  } catch (error) {
+    console.error('❌ Erro ao atualizar ordem:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erro ao atualizar ordem',
+      error: error.message
+    });
+  }
+});
+
+// ✅ POST /api/room-types/init - Inicializar tipos padrão
+router.post('/init', authenticate, async (req, res) => {
+  try {
+    console.log('🏗️ POST /api/room-types/init - Inicializando tipos padrão...');
+    
+    // Verificar se usuário é admin
+    if (req.user?.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Apenas administradores podem inicializar tipos padrão'
+      });
+    }
+
+    await RoomType.criarTiposPadrao();
+
+    const tipos = await RoomType.findActive();
+
+    res.json({
+      success: true,
+      data: tipos,
+      message: 'Tipos padrão inicializados com sucesso'
+    });
+
+  } catch (error) {
+    console.error('❌ Erro ao inicializar tipos:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erro ao inicializar tipos',
+      error: error.message
+    });
+  }
+});
+
+module.exports = router;
