@@ -171,6 +171,29 @@ const roomTypeSchema = new mongoose.Schema({
     min: [0, 'Ordem não pode ser negativa']
   },
 
+  // ✅ NOVOS CAMPOS PARA DISPONIBILIDADE DETALHADA
+  disponibilidadePorPeriodo: {
+    type: Object,
+    default: {},
+    // Ex: { "4h": { hoje: true, agendado: false }, "diaria": { hoje: true, agendado: true } }
+  },
+  configuracoesCompletas: {
+    type: Object,
+    default: {},
+    // Ex: { "4h": { ativo: true, preco: 55, hoje: true, agendado: false } }
+  },
+  // ✅ LISTAS PARA CONSULTA RÁPIDA
+  periodosHoje: {
+    type: [String],
+    default: [],
+    // Ex: ["4h", "6h", "12h", "diaria"]
+  },
+  periodosAgendado: {
+    type: [String],
+    default: [],
+    // Ex: ["diaria", "pernoite"]
+  },
+
   // Auditoria
   criadoPor: {
     type: mongoose.Schema.Types.ObjectId,
