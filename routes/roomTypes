@@ -1,15 +1,15 @@
-// routes/roomTypes.js - VERSÃO COM AUTENTICAÇÃO REATIVADA
+// routes/roomTypes.js - VERSÃO COM DISPONIBILIDADE POR PERÍODO
 const express = require('express');
 const router = express.Router();
 const RoomType = require('../models/RoomType');
-const { authenticate } = require('../middleware/auth'); // ✅ REATIVADO
+const { authenticate } = require('../middleware/auth');
+const { getDefaultAvailabilityByPeriod, validatePeriodAvailability } = require('../utils/periodAvailability');
 
 // ✅ GET /api/room-types - Listar todos os tipos (COM AUTH)
 router.get('/', authenticate, async (req, res) => {
   try {
     console.log('📥 GET /api/room-types - Listando tipos de quarto...');
     
-    // ✅ CORRIGIDO: Usar findAtivos em vez de findActive
     const roomTypes = await RoomType.findAtivos();
     
     console.log(`✅ ${roomTypes.length} tipos encontrados`);
@@ -29,12 +29,41 @@ router.get('/', authenticate, async (req, res) => {
   }
 });
 
+// ✅ GET /api/room-types/available/:periodo/:contexto - Buscar tipos disponíveis para período específico
+router.get('/available/:periodo/:contexto', authenticate, async (req, res) => {
+  try {
+    const { periodo, contexto } = req.params;
+    console.log(`📥 GET /api/room-types/available/${periodo}/${contexto}`);
+    
+    if (!['hoje', 'agendado'].includes(contexto)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Contexto deve ser "hoje" ou "agendado"'
+      });
+    }
+    
+    const roomTypes = await RoomType.findDisponivelParaPeriodo(periodo, contexto);
+    
+    res.json({
+      success: true,
+      data: roomTypes,
+      message: `${roomTypes.length} tipos disponíveis para ${periodo} (${contexto})`
+    });
+  } catch (error) {
+    console.error('❌ Erro ao buscar tipos disponíveis:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erro interno do servidor',
+      error: error.message
+    });
+  }
+});
+
 // ✅ GET /api/room-types/:id - Buscar tipo específico (COM AUTH)
 router.get('/:id', authenticate, async (req, res) => {
   try {
     console.log(`📥 GET /api/room-types/${req.params.id}`);
     
-    // ✅ CORRIGIDO: Usar disponibilidade.ativo em vez de active
     const roomType = await RoomType.findOne({ 
       id: req.params.id, 
       'disponibilidade.ativo': true 
@@ -68,7 +97,14 @@ router.post('/', authenticate, async (req, res) => {
     console.log('📤 POST /api/room-types - Criando novo tipo...');
     console.log('📦 Dados recebidos:', req.body);
     
-    const { nome, precosPorPeriodo, amenidades, descricao, configuracao } = req.body;
+    const { 
+      nome, 
+      precosPorPeriodo, 
+      disponibilidadePorPeriodo,
+      amenidades, 
+      descricao, 
+      configuracao 
+    } = req.body;
 
     if (!nome || !nome.trim()) {
       return res.status(400).json({
@@ -92,16 +128,48 @@ router.post('/', authenticate, async (req, res) => {
     const lastType = await RoomType.findOne().sort({ ordem: -1 });
     const newOrder = lastType ? lastType.ordem + 1 : 1;
 
+    // ✅ PROCESSAR DISPONIBILIDADE POR PERÍODO
+    const periodosHoje = [];
+    const periodosAgendado = [];
+    const disponibilidadeProcessada = new Map();
+    
+    if (disponibilidadePorPeriodo) {
+      Object.entries(disponibilidadePorPeriodo).forEach(([periodoId, config]) => {
+        disponibilidadeProcessada.set(periodoId, {
+          hoje: config.hoje || false,
+          agendado: config.agendado || false,
+          availableFor: []
+        });
+        
+        if (config.hoje) {
+          periodosHoje.push(periodoId);
+          disponibilidadeProcessada.get(periodoId).availableFor.push('today');
+        }
+        if (config.agendado) {
+          periodosAgendado.push(periodoId);
+          disponibilidadeProcessada.get(periodoId).availableFor.push('future');
+        }
+      });
+    }
+
     // ✅ DADOS ATUALIZADOS PARA O NOVO MODELO
     const roomTypeData = {
       id,
       nome: nome.trim(),
-      precosPorPeriodo: precosPorPeriodo || {},
+      precosPorPeriodo: precosPorPeriodo ? new Map(Object.entries(precosPorPeriodo)) : new Map(),
+      disponibilidadePorPeriodo: disponibilidadeProcessada,
+      periodosHoje,
+      periodosAgendado,
       amenidades: amenidades || ['wifi', 'ar_condicionado', 'tv'],
       descricao: descricao || `Quarto tipo ${nome}`,
       configuracao: configuracao || { capacidadeMaxima: 2 },
       ordem: newOrder,
-      criadoPor: req.user?.id || req.user?._id
+      criadoPor: req.user?.id || req.user?._id,
+      disponibilidade: {
+        ativo: true,
+        aceitaReservaHoje: periodosHoje.length > 0,
+        aceitaReservaAgendada: periodosAgendado.length > 0
+      }
     };
 
     const roomType = new RoomType(roomTypeData);
@@ -140,107 +208,173 @@ router.post('/', authenticate, async (req, res) => {
   }
 });
 
-// ✅ PUT /api/room-types/:id - Atualizar tipo (VERSÃO CORRIGIDA)
+// ✅ PUT /api/room-types/:id - Atualizar tipo (VERSÃO COMPLETA COM DISPONIBILIDADE)
 router.put('/:id', authenticate, async (req, res) => {
   try {
-    console.log(`📤 PUT /api/room-types/${req.params.id}`);
-    console.log('📦 Dados recebidos:', JSON.stringify(req.body, null, 2));
-    
-    const { nome, precosPorPeriodo, amenidades, descricao, configuracao, disponibilidade, ativo, active } = req.body;
+    const { id } = req.params;
+    const {
+      nome,
+      precosPorPeriodo,
+      disponibilidadePorPeriodo,
+      configuracoesCompletas,
+      periodosHoje,
+      periodosAgendado,
+      amenidades,
+      descricao,
+      configuracao,
+      disponibilidade,
+      ativo,
+      active
+    } = req.body;
+
+    console.log('📨 Recebendo atualização de tipo:', {
+      id,
+      nome,
+      precosPorPeriodo,
+      disponibilidadePorPeriodo,
+      periodosHoje,
+      periodosAgendado
+    });
 
     // ✅ BUSCAR TIPO EXISTENTE
-    const roomType = await RoomType.findOne({ id: req.params.id });
-    if (!roomType) {
-      console.log(`❌ Tipo não encontrado: ${req.params.id}`);
+    const tipoExistente = await RoomType.findOne({ id });
+    if (!tipoExistente) {
+      console.log(`❌ Tipo não encontrado: ${id}`);
       return res.status(404).json({
         success: false,
         message: 'Tipo de quarto não encontrado'
       });
     }
 
-    console.log('📋 Tipo encontrado:', roomType.nome);
+    console.log('📋 Tipo encontrado:', tipoExistente.nome);
 
-    // ✅ ATUALIZAR CAMPOS COM VALIDAÇÃO
-    if (nome && nome.trim()) {
-      roomType.nome = nome.trim();
-      console.log('✅ Nome atualizado:', roomType.nome);
+    // ✅ PROCESSAR DISPONIBILIDADE POR PERÍODO
+    const periodosHojeProcessados = [];
+    const periodosAgendadoProcessados = [];
+    let disponibilidadeProcessada = new Map();
+    
+    if (disponibilidadePorPeriodo) {
+      // ✅ VALIDAR DISPONIBILIDADE ANTES DE PROCESSAR
+      const errosValidacao = validatePeriodAvailability(disponibilidadePorPeriodo);
+      if (errosValidacao.length > 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Erros de validação na disponibilidade',
+          errors: errosValidacao
+        });
+      }
+
+      Object.entries(disponibilidadePorPeriodo).forEach(([periodoId, config]) => {
+        const configProcessada = {
+          hoje: config.hoje || false,
+          agendado: config.agendado || false,
+          availableFor: []
+        };
+        
+        if (config.hoje) {
+          periodosHojeProcessados.push(periodoId);
+          configProcessada.availableFor.push('today');
+        }
+        if (config.agendado) {
+          periodosAgendadoProcessados.push(periodoId);
+          configProcessada.availableFor.push('future');
+        }
+        
+        disponibilidadeProcessada.set(periodoId, configProcessada);
+      });
+    } else {
+      // Manter disponibilidade existente se não fornecida
+      disponibilidadeProcessada = tipoExistente.disponibilidadePorPeriodo || new Map();
     }
 
-    // ✅ ATUALIZAR PREÇOS POR PERÍODO (PRINCIPAL)
+    // ✅ PROCESSAR CONFIGURAÇÕES COMPLETAS
+    let configuracoesProcessadas = new Map();
+    if (configuracoesCompletas) {
+      Object.entries(configuracoesCompletas).forEach(([periodoId, config]) => {
+        configuracoesProcessadas.set(periodoId, config);
+      });
+    }
+
+    // ✅ ATUALIZAR PREÇOS
+    let precosProcessados = new Map();
     if (precosPorPeriodo && typeof precosPorPeriodo === 'object') {
-      // Verificar se há preços válidos
       const precosValidos = Object.entries(precosPorPeriodo).filter(([_, preco]) => 
         typeof preco === 'number' && preco > 0
       );
       
       if (precosValidos.length > 0) {
-        roomType.precosPorPeriodo = { ...precosPorPeriodo };
-        console.log('✅ Preços atualizados:', roomType.precosPorPeriodo);
-        console.log(`📊 ${precosValidos.length} preços válidos recebidos`);
+        precosProcessados = new Map(precosValidos);
+        console.log('✅ Preços processados:', Object.fromEntries(precosProcessados));
       } else {
-        console.log('⚠️ Nenhum preço válido encontrado nos dados recebidos');
+        console.log('⚠️ Nenhum preço válido encontrado');
         return res.status(400).json({
           success: false,
           message: 'É necessário pelo menos um preço válido (maior que zero)'
         });
       }
     } else {
-      console.log('⚠️ Campo precosPorPeriodo não fornecido ou inválido');
+      // Manter preços existentes se não fornecidos
+      precosProcessados = tipoExistente.precosPorPeriodo || new Map();
     }
 
-    // ✅ ATUALIZAR OUTROS CAMPOS
-    if (amenidades && Array.isArray(amenidades)) {
-      roomType.amenidades = amenidades;
-      console.log('✅ Amenidades atualizadas:', roomType.amenidades);
-    }
-
-    if (descricao !== undefined) {
-      roomType.descricao = descricao;
-      console.log('✅ Descrição atualizada');
-    }
-
-    if (configuracao && typeof configuracao === 'object') {
-      roomType.configuracao = { ...roomType.configuracao, ...configuracao };
-      console.log('✅ Configuração atualizada:', roomType.configuracao);
-    }
-
-    if (disponibilidade && typeof disponibilidade === 'object') {
-      roomType.disponibilidade = { ...roomType.disponibilidade, ...disponibilidade };
-      console.log('✅ Disponibilidade atualizada:', roomType.disponibilidade);
-    }
+    // ✅ DADOS DE ATUALIZAÇÃO
+    const dadosAtualizacao = {
+      nome: nome || tipoExistente.nome,
+      precosPorPeriodo: precosProcessados,
+      disponibilidadePorPeriodo: disponibilidadeProcessada,
+      configuracoesCompletas: configuracoesProcessadas.size > 0 ? configuracoesProcessadas : tipoExistente.configuracoesCompletas,
+      periodosHoje: periodosHojeProcessados.length > 0 ? periodosHojeProcessados : (periodosHoje || tipoExistente.periodosHoje),
+      periodosAgendado: periodosAgendadoProcessados.length > 0 ? periodosAgendadoProcessados : (periodosAgendado || tipoExistente.periodosAgendado),
+      amenidades: amenidades || tipoExistente.amenidades,
+      descricao: descricao !== undefined ? descricao : tipoExistente.descricao,
+      configuracao: configuracao ? { ...tipoExistente.configuracao, ...configuracao } : tipoExistente.configuracao,
+      disponibilidade: disponibilidade ? { 
+        ...tipoExistente.disponibilidade, 
+        ...disponibilidade,
+        aceitaReservaHoje: periodosHojeProcessados.length > 0,
+        aceitaReservaAgendada: periodosAgendadoProcessados.length > 0
+      } : {
+        ...tipoExistente.disponibilidade,
+        aceitaReservaHoje: periodosHojeProcessados.length > 0 || tipoExistente.periodosHoje?.length > 0,
+        aceitaReservaAgendada: periodosAgendadoProcessados.length > 0 || tipoExistente.periodosAgendado?.length > 0
+      },
+      atualizadoPor: req.user?.id || req.user?._id,
+      updatedAt: new Date()
+    };
 
     // ✅ CAMPOS DE ATIVAÇÃO
     if (ativo !== undefined) {
-      roomType.ativo = ativo;
-      roomType.active = ativo;
-      if (!roomType.disponibilidade) roomType.disponibilidade = {};
-      roomType.disponibilidade.ativo = ativo;
-      console.log('✅ Status ativo atualizado:', ativo);
+      dadosAtualizacao.ativo = ativo;
+      dadosAtualizacao.active = ativo;
+      dadosAtualizacao.disponibilidade.ativo = ativo;
     }
 
     if (active !== undefined) {
-      roomType.active = active;
-      roomType.ativo = active;
-      if (!roomType.disponibilidade) roomType.disponibilidade = {};
-      roomType.disponibilidade.ativo = active;
-      console.log('✅ Status active atualizado:', active);
+      dadosAtualizacao.active = active;
+      dadosAtualizacao.ativo = active;
+      dadosAtualizacao.disponibilidade.ativo = active;
     }
-    
-    // ✅ AUDITORIA
-    roomType.atualizadoPor = req.user?.id || req.user?._id;
+
+    console.log('💾 Salvando no banco:', {
+      nome: dadosAtualizacao.nome,
+      precosPorPeriodo: Object.fromEntries(dadosAtualizacao.precosPorPeriodo),
+      periodosHoje: dadosAtualizacao.periodosHoje,
+      periodosAgendado: dadosAtualizacao.periodosAgendado
+    });
 
     // ✅ SALVAR NO BANCO
-    console.log('💾 Salvando no banco de dados...');
-    await roomType.save();
+    const tipoAtualizado = await RoomType.findOneAndUpdate(
+      { id },
+      dadosAtualizacao,
+      { new: true, runValidators: true }
+    );
 
-    console.log('✅ Tipo salvo com sucesso no banco');
-    console.log('📊 Preços finais salvos:', roomType.precosPorPeriodo);
+    console.log('✅ Tipo atualizado no banco:', tipoAtualizado.nome);
 
-    // ✅ RESPOSTA DE SUCESSO
     res.json({
       success: true,
-      data: roomType,
-      message: `Tipo "${roomType.nome}" atualizado com sucesso`
+      message: `Tipo "${tipoAtualizado.nome}" atualizado com sucesso`,
+      data: tipoAtualizado
     });
 
   } catch (error) {
@@ -269,6 +403,67 @@ router.put('/:id', authenticate, async (req, res) => {
     }
   }
 });
+
+// ✅ PUT /api/room-types/:id/periodo/:periodoId - Atualizar disponibilidade de período específico
+router.put('/:id/periodo/:periodoId', authenticate, async (req, res) => {
+  try {
+    const { id, periodoId } = req.params;
+    const { hoje, agendado, preco } = req.body;
+
+    console.log(`📤 PUT /api/room-types/${id}/periodo/${periodoId}`, { hoje, agendado, preco });
+
+    const roomType = await RoomType.findOne({ id });
+    if (!roomType) {
+      return res.status(404).json({
+        success: false,
+        message: 'Tipo de quarto não encontrado'
+      });
+    }
+
+    // ✅ ATUALIZAR DISPONIBILIDADE DO PERÍODO
+    if (hoje !== undefined || agendado !== undefined) {
+      roomType.setDisponibilidadePeriodo(
+        periodoId, 
+        hoje !== undefined ? hoje : roomType.isPeriodoDisponivelHoje(periodoId),
+        agendado !== undefined ? agendado : roomType.isPeriodoDisponivelAgendado(periodoId)
+      );
+    }
+
+    // ✅ ATUALIZAR PREÇO DO PERÍODO
+    if (preco !== undefined && typeof preco === 'number' && preco >= 0) {
+      roomType.setPrecoPorPeriodo(periodoId, preco);
+    }
+
+    roomType.atualizadoPor = req.user?.id || req.user?._id;
+    await roomType.save();
+
+    console.log(`✅ Período ${periodoId} atualizado para tipo ${roomType.nome}`);
+
+    res.json({
+      success: true,
+      message: `Período ${periodoId} atualizado com sucesso`,
+      data: {
+        id: roomType.id,
+        nome: roomType.nome,
+        periodo: {
+          id: periodoId,
+          hoje: roomType.isPeriodoDisponivelHoje(periodoId),
+          agendado: roomType.isPeriodoDisponivelAgendado(periodoId),
+          preco: roomType.getPrecoPorPeriodo(periodoId)
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Erro ao atualizar período:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erro ao atualizar período',
+      error: error.message
+    });
+  }
+});
+
 // ✅ DELETE /api/room-types/:id - Deletar tipo (COM AUTH)
 router.delete('/:id', authenticate, async (req, res) => {
   try {
@@ -308,6 +503,8 @@ router.delete('/:id', authenticate, async (req, res) => {
 
     // Soft delete
     roomType.disponibilidade.ativo = false;
+    roomType.ativo = false;
+    roomType.active = false;
     roomType.atualizadoPor = req.user?.id || req.user?._id;
     await roomType.save();
 
