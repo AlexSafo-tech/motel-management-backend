@@ -1,4 +1,4 @@
-// models/RoomType.js - MODELO COMPLETO E FUNCIONAL
+// models/RoomType.js - MODELO COMPLETO COM DISPONIBILIDADE POR PERÍODO
 const mongoose = require('mongoose');
 
 const roomTypeSchema = new mongoose.Schema({
@@ -25,17 +25,56 @@ const roomTypeSchema = new mongoose.Schema({
 
   // ✅ PREÇOS DINÂMICOS POR PERÍODO
   precosPorPeriodo: {
-    type: Object,
-    default: {},
+    type: Map,
+    of: Number,
+    default: new Map(),
     validate: {
       validator: function(precos) {
-        if (!precos || typeof precos !== 'object') return true;
-        return Object.values(precos).every(preco => 
-          typeof preco === 'number' && preco >= 0
-        );
+        if (!precos) return true;
+        for (let [key, value] of precos) {
+          if (typeof value !== 'number' || value < 0) {
+            return false;
+          }
+        }
+        return true;
       },
       message: 'Todos os preços devem ser números não negativos'
     }
+  },
+
+  // ✅ DISPONIBILIDADE POR PERÍODO
+  disponibilidadePorPeriodo: {
+    type: Map,
+    of: {
+      hoje: { type: Boolean, default: true },
+      agendado: { type: Boolean, default: true },
+      availableFor: [String] // ["today", "future"]
+    },
+    default: new Map()
+  },
+
+  // ✅ CONFIGURAÇÕES COMPLETAS POR PERÍODO
+  configuracoesCompletas: {
+    type: Map,
+    of: {
+      ativo: { type: Boolean, default: true },
+      preco: { type: Number, min: 0 },
+      hoje: { type: Boolean, default: true },
+      agendado: { type: Boolean, default: true },
+      availableFor: [String]
+    },
+    default: new Map()
+  },
+
+  // ✅ CAMPOS SIMPLIFICADOS PARA CONSULTA RÁPIDA
+  periodosHoje: {
+    type: [String],
+    default: []
+  },
+
+  periodosAgendado: {
+    type: [String], 
+    default: []
   },
 
   // ✅ PREÇOS BASE PARA COMPATIBILIDADE (DEPRECATED)
@@ -189,13 +228,18 @@ roomTypeSchema.pre('save', function(next) {
     this.ordem = this.order;
   }
   
+  // ✅ SINCRONIZAR PREÇOS E DISPONIBILIDADE
+  if (this.isModified('precosPorPeriodo') || this.isModified('disponibilidadePorPeriodo')) {
+    this.syncPeriodData();
+  }
+  
   // Sincronizar preços base com preços por período
-  if (this.precosPorPeriodo && Object.keys(this.precosPorPeriodo).length > 0) {
+  if (this.precosPorPeriodo && this.precosPorPeriodo.size > 0) {
     this.precosBase = {
-      '4h': this.precosPorPeriodo['4h'] || this.precosBase['4h'] || 55,
-      '6h': this.precosPorPeriodo['6h'] || this.precosBase['6h'] || 70,
-      '12h': this.precosPorPeriodo['12h'] || this.precosBase['12h'] || 90,
-      'daily': this.precosPorPeriodo['diaria'] || this.precosBase['daily'] || 120
+      '4h': this.precosPorPeriodo.get('4h') || this.precosBase['4h'] || 55,
+      '6h': this.precosPorPeriodo.get('6h') || this.precosBase['6h'] || 70,
+      '12h': this.precosPorPeriodo.get('12h') || this.precosBase['12h'] || 90,
+      'daily': this.precosPorPeriodo.get('diaria') || this.precosBase['daily'] || 120
     };
   }
   
@@ -204,27 +248,84 @@ roomTypeSchema.pre('save', function(next) {
 
 // ✅ MÉTODOS DE INSTÂNCIA
 roomTypeSchema.methods.getPrecoPorPeriodo = function(periodoId) {
-  return this.precosPorPeriodo?.[periodoId] || this.precosBase?.[periodoId] || 0;
+  return this.precosPorPeriodo?.get(periodoId) || this.precosBase?.[periodoId] || 0;
 };
 
 roomTypeSchema.methods.setPrecoPorPeriodo = function(periodoId, preco) {
   if (!this.precosPorPeriodo) {
-    this.precosPorPeriodo = {};
+    this.precosPorPeriodo = new Map();
   }
-  this.precosPorPeriodo[periodoId] = preco;
+  this.precosPorPeriodo.set(periodoId, preco);
 };
 
 roomTypeSchema.methods.temPrecoDefinido = function(periodoId) {
-  return (this.precosPorPeriodo && this.precosPorPeriodo[periodoId] > 0) ||
+  return (this.precosPorPeriodo && this.precosPorPeriodo.get(periodoId) > 0) ||
          (this.precosBase && this.precosBase[periodoId] > 0);
 };
 
 roomTypeSchema.methods.getPrecosPorPeriodo = function() {
+  if (this.precosPorPeriodo instanceof Map) {
+    return Object.fromEntries(this.precosPorPeriodo);
+  }
   return this.precosPorPeriodo || {};
 };
 
 roomTypeSchema.methods.isAtivo = function() {
   return this.ativo || this.active || this.disponibilidade?.ativo || false;
+};
+
+// ✅ NOVOS MÉTODOS PARA DISPONIBILIDADE POR PERÍODO
+roomTypeSchema.methods.isPeriodoDisponivelHoje = function(periodoId) {
+  const config = this.disponibilidadePorPeriodo?.get(periodoId);
+  return config?.hoje || this.periodosHoje?.includes(periodoId) || false;
+};
+
+roomTypeSchema.methods.isPeriodoDisponivelAgendado = function(periodoId) {
+  const config = this.disponibilidadePorPeriodo?.get(periodoId);
+  return config?.agendado || this.periodosAgendado?.includes(periodoId) || false;
+};
+
+roomTypeSchema.methods.setDisponibilidadePeriodo = function(periodoId, hoje, agendado) {
+  if (!this.disponibilidadePorPeriodo) {
+    this.disponibilidadePorPeriodo = new Map();
+  }
+  
+  this.disponibilidadePorPeriodo.set(periodoId, {
+    hoje: hoje,
+    agendado: agendado,
+    availableFor: []
+  });
+  
+  if (hoje) this.availableFor.push('today');
+  if (agendado) this.availableFor.push('future');
+  
+  this.syncPeriodData();
+};
+
+roomTypeSchema.methods.syncPeriodData = function() {
+  const periodosHoje = [];
+  const periodosAgendado = [];
+  
+  if (this.disponibilidadePorPeriodo instanceof Map) {
+    for (let [periodoId, config] of this.disponibilidadePorPeriodo) {
+      if (config.hoje) periodosHoje.push(periodoId);
+      if (config.agendado) periodosAgendado.push(periodoId);
+    }
+  }
+  
+  this.periodosHoje = periodosHoje;
+  this.periodosAgendado = periodosAgendado;
+  
+  // Atualizar disponibilidade geral
+  this.disponibilidade.aceitaReservaHoje = periodosHoje.length > 0;
+  this.disponibilidade.aceitaReservaAgendada = periodosAgendado.length > 0;
+};
+
+roomTypeSchema.methods.getConfiguracoesCompletas = function() {
+  if (this.configuracoesCompletas instanceof Map) {
+    return Object.fromEntries(this.configuracoesCompletas);
+  }
+  return this.configuracoesCompletas || {};
 };
 
 // ✅ MÉTODOS ESTÁTICOS CORRIGIDOS
@@ -267,25 +368,46 @@ roomTypeSchema.statics.findByIds = function(ids) {
   });
 };
 
-// ✅ CRIAR TIPOS PADRÃO COM PREÇOS BASE
+roomTypeSchema.statics.findDisponivelParaPeriodo = function(periodoId, contexto = 'hoje') {
+  const campo = contexto === 'hoje' ? 'periodosHoje' : 'periodosAgendado';
+  return this.find({
+    $or: [
+      { 'disponibilidade.ativo': true },
+      { 'ativo': true },
+      { 'active': true }
+    ],
+    [campo]: periodoId
+  }).sort({ ordem: 1 });
+};
+
+// ✅ CRIAR TIPOS PADRÃO COM PREÇOS BASE E DISPONIBILIDADE
 roomTypeSchema.statics.criarTiposPadrao = async function() {
   try {
     const count = await this.countDocuments();
     
     if (count === 0) {
-      console.log('🏷️ Criando tipos de quarto padrão com preços base...');
+      console.log('🏷️ Criando tipos de quarto padrão com disponibilidade por período...');
       
       const tiposParaCriar = [
         {
           id: 'standard',
           nome: 'Standard',
-          precosPorPeriodo: {
-            '4h': 55,
-            '6h': 70, 
-            '12h': 90,
-            'diaria': 120,
-            'pernoite': 100
-          },
+          precosPorPeriodo: new Map([
+            ['4h', 55],
+            ['6h', 70], 
+            ['12h', 90],
+            ['diaria', 120],
+            ['pernoite', 100]
+          ]),
+          disponibilidadePorPeriodo: new Map([
+            ['4h', { hoje: true, agendado: false, availableFor: ['today'] }],
+            ['6h', { hoje: true, agendado: false, availableFor: ['today'] }],
+            ['12h', { hoje: true, agendado: false, availableFor: ['today'] }],
+            ['diaria', { hoje: true, agendado: true, availableFor: ['today', 'future'] }],
+            ['pernoite', { hoje: false, agendado: true, availableFor: ['future'] }]
+          ]),
+          periodosHoje: ['4h', '6h', '12h', 'diaria'],
+          periodosAgendado: ['diaria', 'pernoite'],
           configuracao: {
             capacidadeMaxima: 2,
             metrosQuadrados: 25
@@ -298,13 +420,22 @@ roomTypeSchema.statics.criarTiposPadrao = async function() {
         {
           id: 'premium',
           nome: 'Premium', 
-          precosPorPeriodo: {
-            '4h': 75,
-            '6h': 95,
-            '12h': 115, 
-            'diaria': 150,
-            'pernoite': 130
-          },
+          precosPorPeriodo: new Map([
+            ['4h', 75],
+            ['6h', 95],
+            ['12h', 115], 
+            ['diaria', 150],
+            ['pernoite', 130]
+          ]),
+          disponibilidadePorPeriodo: new Map([
+            ['4h', { hoje: true, agendado: false, availableFor: ['today'] }],
+            ['6h', { hoje: true, agendado: false, availableFor: ['today'] }],
+            ['12h', { hoje: true, agendado: false, availableFor: ['today'] }],
+            ['diaria', { hoje: true, agendado: true, availableFor: ['today', 'future'] }],
+            ['pernoite', { hoje: false, agendado: true, availableFor: ['future'] }]
+          ]),
+          periodosHoje: ['4h', '6h', '12h', 'diaria'],
+          periodosAgendado: ['diaria', 'pernoite'],
           configuracao: {
             capacidadeMaxima: 2,
             metrosQuadrados: 35
@@ -318,13 +449,22 @@ roomTypeSchema.statics.criarTiposPadrao = async function() {
         {
           id: 'luxo',
           nome: 'Luxo',
-          precosPorPeriodo: {
-            '4h': 100,
-            '6h': 130,
-            '12h': 160,
-            'diaria': 200, 
-            'pernoite': 170
-          },
+          precosPorPeriodo: new Map([
+            ['4h', 100],
+            ['6h', 130],
+            ['12h', 160],
+            ['diaria', 200], 
+            ['pernoite', 170]
+          ]),
+          disponibilidadePorPeriodo: new Map([
+            ['4h', { hoje: true, agendado: false, availableFor: ['today'] }],
+            ['6h', { hoje: true, agendado: false, availableFor: ['today'] }],
+            ['12h', { hoje: true, agendado: false, availableFor: ['today'] }],
+            ['diaria', { hoje: true, agendado: true, availableFor: ['today', 'future'] }],
+            ['pernoite', { hoje: false, agendado: true, availableFor: ['future'] }]
+          ]),
+          periodosHoje: ['4h', '6h', '12h', 'diaria'],
+          periodosAgendado: ['diaria', 'pernoite'],
           configuracao: {
             capacidadeMaxima: 2,
             metrosQuadrados: 45,
@@ -339,13 +479,22 @@ roomTypeSchema.statics.criarTiposPadrao = async function() {
         {
           id: 'suite',
           nome: 'Suite Presidential',
-          precosPorPeriodo: {
-            '4h': 150,
-            '6h': 200,
-            '12h': 250,
-            'diaria': 300,
-            'pernoite': 250
-          },
+          precosPorPeriodo: new Map([
+            ['4h', 150],
+            ['6h', 200],
+            ['12h', 250],
+            ['diaria', 300],
+            ['pernoite', 250]
+          ]),
+          disponibilidadePorPeriodo: new Map([
+            ['4h', { hoje: true, agendado: false, availableFor: ['today'] }],
+            ['6h', { hoje: true, agendado: false, availableFor: ['today'] }],
+            ['12h', { hoje: true, agendado: false, availableFor: ['today'] }],
+            ['diaria', { hoje: true, agendado: true, availableFor: ['today', 'future'] }],
+            ['pernoite', { hoje: false, agendado: true, availableFor: ['future'] }]
+          ]),
+          periodosHoje: ['4h', '6h', '12h', 'diaria'],
+          periodosAgendado: ['diaria', 'pernoite'],
           configuracao: {
             capacidadeMaxima: 4,
             metrosQuadrados: 60,
@@ -384,58 +533,13 @@ roomTypeSchema.statics.criarTiposPadrao = async function() {
   }
 };
 
-// ✅ MÉTODO PARA MIGRAR DADOS
-roomTypeSchema.statics.migrarCampoAtivo = async function() {
-  try {
-    console.log('🔄 Migrando campos de ativação...');
-    
-    const tipos = await this.find({});
-    let migrados = 0;
-    
-    for (const tipo of tipos) {
-      let precisaSalvar = false;
-      
-      // Migrar ativo para disponibilidade.ativo
-      if (tipo.ativo !== undefined) {
-        if (!tipo.disponibilidade) {
-          tipo.disponibilidade = {};
-        }
-        if (tipo.disponibilidade.ativo !== tipo.ativo) {
-          tipo.disponibilidade.ativo = tipo.ativo;
-          precisaSalvar = true;
-        }
-        if (tipo.active !== tipo.ativo) {
-          tipo.active = tipo.ativo;
-          precisaSalvar = true;
-        }
-      }
-      
-      // Migrar ordem
-      if (tipo.ordem !== undefined && tipo.order !== tipo.ordem) {
-        tipo.order = tipo.ordem;
-        precisaSalvar = true;
-      }
-      
-      if (precisaSalvar) {
-        await tipo.save();
-        migrados++;
-        console.log(`✅ Migrado: ${tipo.nome}`);
-      }
-    }
-    
-    console.log(`✅ ${migrados} tipos migrados com sucesso`);
-    return migrados;
-  } catch (error) {
-    console.error('❌ Erro na migração:', error);
-    throw error;
-  }
-};
-
 // ✅ ÍNDICES
 roomTypeSchema.index({ id: 1 }, { unique: true });
 roomTypeSchema.index({ ativo: 1, ordem: 1 });
 roomTypeSchema.index({ active: 1, order: 1 });
 roomTypeSchema.index({ 'disponibilidade.ativo': 1, ordem: 1 });
+roomTypeSchema.index({ periodosHoje: 1 });
+roomTypeSchema.index({ periodosAgendado: 1 });
 roomTypeSchema.index({ nome: 1 });
 
 module.exports = mongoose.models.RoomType || mongoose.model('RoomType', roomTypeSchema);
