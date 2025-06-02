@@ -208,103 +208,55 @@ router.post('/', authenticate, async (req, res) => {
   }
 });
 
-// ✅ PUT /api/room-types/:id - Atualizar tipo (VERSÃO COMPLETA COM DISPONIBILIDADE)
+// ✅ ROTA PUT CORRIGIDA PARA SALVAR DISPONIBILIDADE
 router.put('/:id', authenticate, async (req, res) => {
   try {
-    const { id } = req.params;
-    const {
-      nome,
-      precosPorPeriodo,
-      disponibilidadePorPeriodo,
-      configuracoesCompletas,
-      periodosHoje,
-      periodosAgendado,
-      amenidades,
-      descricao,
-      configuracao,
-      disponibilidade,
-      ativo,
-      active
+    console.log(`📤 PUT /api/room-types/${req.params.id}`);
+    console.log('📦 Dados recebidos (COMPLETOS):', JSON.stringify(req.body, null, 2));
+    
+    const { 
+      nome, 
+      precosPorPeriodo, 
+      disponibilidadePorPeriodo,    // ✅ NOVO: Receber disponibilidade
+      configuracoesCompletas,       // ✅ NOVO: Configurações completas
+      periodosHoje,                 // ✅ NOVO: Lista de períodos para hoje
+      periodosAgendado,             // ✅ NOVO: Lista de períodos para agendado
+      amenidades, 
+      descricao, 
+      configuracao, 
+      disponibilidade, 
+      ativo, 
+      active 
     } = req.body;
 
-    console.log('📨 Recebendo atualização de tipo:', {
-      id,
-      nome,
-      precosPorPeriodo,
-      disponibilidadePorPeriodo,
-      periodosHoje,
-      periodosAgendado
-    });
-
     // ✅ BUSCAR TIPO EXISTENTE
-    const tipoExistente = await RoomType.findOne({ id });
-    if (!tipoExistente) {
-      console.log(`❌ Tipo não encontrado: ${id}`);
+    const roomType = await RoomType.findOne({ id: req.params.id });
+    if (!roomType) {
+      console.log(`❌ Tipo não encontrado: ${req.params.id}`);
       return res.status(404).json({
         success: false,
         message: 'Tipo de quarto não encontrado'
       });
     }
 
-    console.log('📋 Tipo encontrado:', tipoExistente.nome);
+    console.log('📋 Tipo encontrado:', roomType.nome);
 
-    // ✅ PROCESSAR DISPONIBILIDADE POR PERÍODO
-    const periodosHojeProcessados = [];
-    const periodosAgendadoProcessados = [];
-    let disponibilidadeProcessada = new Map();
-    
-    if (disponibilidadePorPeriodo) {
-      // ✅ VALIDAR DISPONIBILIDADE ANTES DE PROCESSAR
-      const errosValidacao = validatePeriodAvailability(disponibilidadePorPeriodo);
-      if (errosValidacao.length > 0) {
-        return res.status(400).json({
-          success: false,
-          message: 'Erros de validação na disponibilidade',
-          errors: errosValidacao
-        });
-      }
-
-      Object.entries(disponibilidadePorPeriodo).forEach(([periodoId, config]) => {
-        const configProcessada = {
-          hoje: config.hoje || false,
-          agendado: config.agendado || false,
-          availableFor: []
-        };
-        
-        if (config.hoje) {
-          periodosHojeProcessados.push(periodoId);
-          configProcessada.availableFor.push('today');
-        }
-        if (config.agendado) {
-          periodosAgendadoProcessados.push(periodoId);
-          configProcessada.availableFor.push('future');
-        }
-        
-        disponibilidadeProcessada.set(periodoId, configProcessada);
-      });
-    } else {
-      // Manter disponibilidade existente se não fornecida
-      disponibilidadeProcessada = tipoExistente.disponibilidadePorPeriodo || new Map();
+    // ✅ ATUALIZAR NOME
+    if (nome && nome.trim()) {
+      roomType.nome = nome.trim();
+      console.log('✅ Nome atualizado:', roomType.nome);
     }
 
-    // ✅ PROCESSAR CONFIGURAÇÕES COMPLETAS
-    let configuracoesProcessadas = new Map();
-    if (configuracoesCompletas) {
-      Object.entries(configuracoesCompletas).forEach(([periodoId, config]) => {
-        configuracoesProcessadas.set(periodoId, config);
-      });
-    }
-
-    // ✅ ATUALIZAR PREÇOS
-    let precosProcessados = new Map();
+    // ✅ ATUALIZAR PREÇOS POR PERÍODO
     if (precosPorPeriodo && typeof precosPorPeriodo === 'object') {
       const precosValidos = Object.entries(precosPorPeriodo).filter(([_, preco]) => 
         typeof preco === 'number' && preco > 0
       );
       
       if (precosValidos.length > 0) {
-        precosProcessados = new Map(precosValidos);
-        console.log('✅ Preços processados:', Object.fromEntries(precosProcessados));
+        roomType.precosPorPeriodo = { ...precosPorPeriodo };
+        console.log('✅ Preços atualizados:', roomType.precosPorPeriodo);
+        console.log(`📊 ${precosValidos.length} preços válidos recebidos`);
       } else {
         console.log('⚠️ Nenhum preço válido encontrado');
         return res.status(400).json({
@@ -312,69 +264,138 @@ router.put('/:id', authenticate, async (req, res) => {
           message: 'É necessário pelo menos um preço válido (maior que zero)'
         });
       }
-    } else {
-      // Manter preços existentes se não fornecidos
-      precosProcessados = tipoExistente.precosPorPeriodo || new Map();
     }
 
-    // ✅ DADOS DE ATUALIZAÇÃO
-    const dadosAtualizacao = {
-      nome: nome || tipoExistente.nome,
-      precosPorPeriodo: precosProcessados,
-      disponibilidadePorPeriodo: disponibilidadeProcessada,
-      configuracoesCompletas: configuracoesProcessadas.size > 0 ? configuracoesProcessadas : tipoExistente.configuracoesCompletas,
-      periodosHoje: periodosHojeProcessados.length > 0 ? periodosHojeProcessados : (periodosHoje || tipoExistente.periodosHoje),
-      periodosAgendado: periodosAgendadoProcessados.length > 0 ? periodosAgendadoProcessados : (periodosAgendado || tipoExistente.periodosAgendado),
-      amenidades: amenidades || tipoExistente.amenidades,
-      descricao: descricao !== undefined ? descricao : tipoExistente.descricao,
-      configuracao: configuracao ? { ...tipoExistente.configuracao, ...configuracao } : tipoExistente.configuracao,
-      disponibilidade: disponibilidade ? { 
-        ...tipoExistente.disponibilidade, 
-        ...disponibilidade,
-        aceitaReservaHoje: periodosHojeProcessados.length > 0,
-        aceitaReservaAgendada: periodosAgendadoProcessados.length > 0
-      } : {
-        ...tipoExistente.disponibilidade,
-        aceitaReservaHoje: periodosHojeProcessados.length > 0 || tipoExistente.periodosHoje?.length > 0,
-        aceitaReservaAgendada: periodosAgendadoProcessados.length > 0 || tipoExistente.periodosAgendado?.length > 0
-      },
-      atualizadoPor: req.user?.id || req.user?._id,
-      updatedAt: new Date()
-    };
+    // ✅ NOVA SEÇÃO: PROCESSAR DISPONIBILIDADE POR PERÍODO
+    if (disponibilidadePorPeriodo && typeof disponibilidadePorPeriodo === 'object') {
+      console.log('📅 Processando disponibilidade por período:', disponibilidadePorPeriodo);
+      
+      // ✅ Criar campos para armazenar no modelo
+      if (!roomType.toObject().disponibilidadePorPeriodo) {
+        roomType.set('disponibilidadePorPeriodo', {});
+      }
+      
+      // ✅ Salvar disponibilidade completa
+      roomType.set('disponibilidadePorPeriodo', disponibilidadePorPeriodo);
+      
+      // ✅ Extrair listas de períodos por contexto
+      const periodosHojeExtraidos = [];
+      const periodosAgendadoExtraidos = [];
+      
+      Object.entries(disponibilidadePorPeriodo).forEach(([periodoId, config]) => {
+        console.log(`   📋 ${periodoId}: hoje=${config.hoje}, agendado=${config.agendado}`);
+        
+        if (config.hoje === true) {
+          periodosHojeExtraidos.push(periodoId);
+        }
+        if (config.agendado === true) {
+          periodosAgendadoExtraidos.push(periodoId);
+        }
+      });
+      
+      // ✅ Salvar listas extraídas
+      roomType.set('periodosHoje', periodosHojeExtraidos);
+      roomType.set('periodosAgendado', periodosAgendadoExtraidos);
+      
+      console.log('✅ Períodos HOJE extraídos:', periodosHojeExtraidos);
+      console.log('✅ Períodos AGENDADO extraídos:', periodosAgendadoExtraidos);
+    }
+
+    // ✅ PROCESSAR CONFIGURAÇÕES COMPLETAS (SE ENVIADO)
+    if (configuracoesCompletas && typeof configuracoesCompletas === 'object') {
+      console.log('🔧 Salvando configurações completas:', configuracoesCompletas);
+      roomType.set('configuracoesCompletas', configuracoesCompletas);
+    }
+
+    // ✅ PROCESSAR LISTAS DIRETAS (SE ENVIADO)
+    if (periodosHoje && Array.isArray(periodosHoje)) {
+      console.log('📋 Períodos HOJE recebidos diretamente:', periodosHoje);
+      roomType.set('periodosHoje', periodosHoje);
+    }
+
+    if (periodosAgendado && Array.isArray(periodosAgendado)) {
+      console.log('📋 Períodos AGENDADO recebidos diretamente:', periodosAgendado);
+      roomType.set('periodosAgendado', periodosAgendado);
+    }
+
+    // ✅ OUTROS CAMPOS (SEM MUDANÇAS)
+    if (amenidades && Array.isArray(amenidades)) {
+      roomType.amenidades = amenidades;
+      console.log('✅ Amenidades atualizadas');
+    }
+
+    if (descricao !== undefined) {
+      roomType.descricao = descricao;
+      console.log('✅ Descrição atualizada');
+    }
+
+    if (configuracao && typeof configuracao === 'object') {
+      roomType.configuracao = { ...roomType.configuracao, ...configuracao };
+      console.log('✅ Configuração atualizada');
+    }
+
+    if (disponibilidade && typeof disponibilidade === 'object') {
+      roomType.disponibilidade = { ...roomType.disponibilidade, ...disponibilidade };
+      console.log('✅ Disponibilidade geral atualizada');
+    }
 
     // ✅ CAMPOS DE ATIVAÇÃO
     if (ativo !== undefined) {
-      dadosAtualizacao.ativo = ativo;
-      dadosAtualizacao.active = ativo;
-      dadosAtualizacao.disponibilidade.ativo = ativo;
+      roomType.ativo = ativo;
+      roomType.active = ativo;
+      if (!roomType.disponibilidade) roomType.disponibilidade = {};
+      roomType.disponibilidade.ativo = ativo;
+      console.log('✅ Status ativo atualizado:', ativo);
     }
 
     if (active !== undefined) {
-      dadosAtualizacao.active = active;
-      dadosAtualizacao.ativo = active;
-      dadosAtualizacao.disponibilidade.ativo = active;
+      roomType.active = active;
+      roomType.ativo = active;
+      if (!roomType.disponibilidade) roomType.disponibilidade = {};
+      roomType.disponibilidade.ativo = active;
+      console.log('✅ Status active atualizado:', active);
     }
-
-    console.log('💾 Salvando no banco:', {
-      nome: dadosAtualizacao.nome,
-      precosPorPeriodo: Object.fromEntries(dadosAtualizacao.precosPorPeriodo),
-      periodosHoje: dadosAtualizacao.periodosHoje,
-      periodosAgendado: dadosAtualizacao.periodosAgendado
-    });
+    
+    // ✅ AUDITORIA
+    roomType.atualizadoPor = req.user?.id || req.user?._id;
 
     // ✅ SALVAR NO BANCO
-    const tipoAtualizado = await RoomType.findOneAndUpdate(
-      { id },
-      dadosAtualizacao,
-      { new: true, runValidators: true }
-    );
+    console.log('💾 Salvando no banco de dados...');
+    console.log('🔍 Dados que serão salvos:');
+    console.log('   📊 Preços:', roomType.precosPorPeriodo);
+    console.log('   📅 Disponibilidade:', roomType.get('disponibilidadePorPeriodo'));
+    console.log('   🚀 Períodos Hoje:', roomType.get('periodosHoje'));
+    console.log('   📅 Períodos Agendado:', roomType.get('periodosAgendado'));
+    
+    await roomType.save();
 
-    console.log('✅ Tipo atualizado no banco:', tipoAtualizado.nome);
+    console.log('✅ Tipo salvo com sucesso no banco');
 
+    // ✅ VERIFICAR SE DADOS FORAM SALVOS CORRETAMENTE
+    const tipoVerificacao = await RoomType.findOne({ id: req.params.id });
+    console.log('🔍 VERIFICAÇÃO PÓS-SAVE:');
+    console.log('   💰 Preços salvos:', tipoVerificacao.precosPorPeriodo);
+    console.log('   📅 Disponibilidade salva:', tipoVerificacao.get('disponibilidadePorPeriodo'));
+    console.log('   🚀 Períodos Hoje salvos:', tipoVerificacao.get('periodosHoje'));
+    console.log('   📅 Períodos Agendado salvos:', tipoVerificacao.get('periodosAgendado'));
+
+    // ✅ RESPOSTA DE SUCESSO COM DADOS COMPLETOS
     res.json({
       success: true,
-      message: `Tipo "${tipoAtualizado.nome}" atualizado com sucesso`,
-      data: tipoAtualizado
+      data: {
+        ...tipoVerificacao.toJSON(),
+        // ✅ Garantir que dados de disponibilidade são retornados
+        disponibilidadePorPeriodo: tipoVerificacao.get('disponibilidadePorPeriodo'),
+        configuracoesCompletas: tipoVerificacao.get('configuracoesCompletas'),
+        periodosHoje: tipoVerificacao.get('periodosHoje'),
+        periodosAgendado: tipoVerificacao.get('periodosAgendado')
+      },
+      message: `Tipo "${roomType.nome}" atualizado com sucesso`,
+      debug: {
+        periodosHojeSalvos: tipoVerificacao.get('periodosHoje')?.length || 0,
+        periodosAgendadoSalvos: tipoVerificacao.get('periodosAgendado')?.length || 0,
+        disponibilidadeSalva: !!tipoVerificacao.get('disponibilidadePorPeriodo')
+      }
     });
 
   } catch (error) {
