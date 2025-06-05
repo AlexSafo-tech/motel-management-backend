@@ -1,12 +1,11 @@
-// routes/reservations.js - VERSÃO CORRIGIDA
+// routes/reservations.js - VERSÃO CORRIGIDA PARA CAPTURAR DADOS DO CLIENTE
 
 const express = require('express');
 const router = express.Router();
 const mongoose = require('mongoose');
 const Reservation = require('../models/Reservation');
 const Room = require('../models/Room');
-const { authenticate } = require('../middleware/auth'); // ✅ CORRIGIDO
-const auth = authenticate; // adicionar esta linha para compatibilidade
+const { authenticate } = require('../middleware/auth');
 
 console.log('✅ Modelo Reservation importado com sucesso');
 
@@ -68,7 +67,6 @@ router.get('/', authenticate, async (req, res) => {
 
     console.log(`📋 Encontradas ${reservations.length} reservas`);
 
-    // ✅ FORMATO SEGURO PARA FRONTEND
     const formattedReservations = reservations.map(reservation => ({
       _id: reservation._id || '',
       reservationNumber: reservation.reservationNumber || 'N/A',
@@ -119,21 +117,36 @@ router.get('/', authenticate, async (req, res) => {
   }
 });
 
-// ✅ ROTA 2: CRIAR RESERVA
+// ✅ ROTA 2: CRIAR RESERVA - CORRIGIDA PARA CAPTURAR DADOS DO CLIENTE
 router.post('/', authenticate, async (req, res) => {
   try {
     console.log('🆕 [POST] Criando nova reserva...');
-    console.log('📦 Body:', JSON.stringify(req.body, null, 2));
+    console.log('📦 Body completo:', JSON.stringify(req.body, null, 2));
 
-    // ✅ EXTRAIR DADOS COM PROTEÇÃO TOTAL
-    const body = req.body || {};
+    // ✅ EXTRAIR TODOS OS DADOS DO CLIENTE DIRETAMENTE DO BODY
     const {
+      // Dados obrigatórios
       checkIn,
       checkOut,
       periodType = '4h',
       roomId,
-      _originalData = {}
-    } = body;
+      totalPrice,
+      paymentMethod = 'Dinheiro',
+      
+      // 🚨 DADOS DO CLIENTE - CAPTURAR DIRETAMENTE
+      customerName,
+      customerPhone,
+      customerEmail, 
+      customerDocument,
+      customerId
+    } = req.body;
+
+    console.log('🔍 === DADOS EXTRAÍDOS DO BODY ===');
+    console.log('👤 customerName:', customerName);
+    console.log('📞 customerPhone:', customerPhone);
+    console.log('📧 customerEmail:', customerEmail);
+    console.log('📄 customerDocument:', customerDocument);
+    console.log('🆔 customerId:', customerId);
 
     // ✅ VALIDAÇÕES BÁSICAS
     if (!checkIn || !checkOut) {
@@ -181,12 +194,10 @@ router.post('/', authenticate, async (req, res) => {
     if (!room) {
       room = await buscarQuartoDisponivel();
     }
-    
-    // ✅ PROCESSAR DADOS ORIGINAIS
-    const originalData = _originalData || {};
-    
+
     // ✅ MAPEAR PERÍODO PARA NOME
     const periodNameMap = {
+      '3h': '3 HORAS',
       '4h': '4 HORAS',
       '6h': '6 HORAS', 
       '12h': '12 HORAS',
@@ -194,16 +205,20 @@ router.post('/', authenticate, async (req, res) => {
       'pernoite': 'PERNOITE'
     };
 
-    // ✅ MAPEAR PREÇOS
+    // ✅ MAPEAR PREÇOS BASE
     const priceMap = {
-      '4h': 50.00,
+      '3h': 50.00,
+      '4h': 55.00,
       '6h': 70.00,
-      '12h': 100.00,
+      '12h': 90.00,
       'daily': 150.00,
       'pernoite': 120.00
     };
 
-    const basePrice = parseFloat(originalData.valor) || priceMap[periodType] || 50.00;
+    // ✅ CALCULAR PREÇO FINAL
+    let finalPrice = parseFloat(totalPrice) || priceMap[periodType] || 50.00;
+    
+    console.log('💰 Preço final calculado:', finalPrice);
 
     // ✅ MAPEAR PAGAMENTO
     const paymentMethodMap = {
@@ -213,14 +228,25 @@ router.post('/', authenticate, async (req, res) => {
       'Transferência': 'transfer'
     };
 
-    const paymentMethod = paymentMethodMap[originalData.pagamento] || 'cash';
+    const finalPaymentMethod = paymentMethodMap[paymentMethod] || 'cash';
+
+    // ✅ PROCESSAR NOME DO CLIENTE - GARANTIR QUE NÃO SEJA VAZIO
+    let finalCustomerName = 'Cliente não informado';
+    
+    if (customerName && typeof customerName === 'string' && customerName.trim() !== '') {
+      finalCustomerName = customerName.trim();
+      console.log('✅ Nome do cliente válido:', finalCustomerName);
+    } else {
+      console.log('⚠️ Nome do cliente não fornecido ou inválido, usando padrão');
+    }
 
     // ✅ DADOS SEGUROS PARA SALVAR
     const reservationData = {
-      customerName: String(originalData.nome || 'Cliente não informado').trim(),
-      customerPhone: String(originalData.telefone || '').trim(),
-      customerEmail: String(originalData.email || '').trim(),
-      customerDocument: String(originalData.documento || '').trim(),
+      // 🚨 DADOS DO CLIENTE - USAR OS VALORES CORRETOS
+      customerName: finalCustomerName,
+      customerPhone: (customerPhone && typeof customerPhone === 'string') ? customerPhone.trim() : '',
+      customerEmail: (customerEmail && typeof customerEmail === 'string') ? customerEmail.trim() : '',
+      customerDocument: (customerDocument && typeof customerDocument === 'string') ? customerDocument.trim() : '',
       
       roomId: room.id,
       roomNumber: room.number,
@@ -231,24 +257,30 @@ router.post('/', authenticate, async (req, res) => {
       periodType: periodType,
       periodName: periodNameMap[periodType] || '4 HORAS',
       
-      basePrice: basePrice,
-      totalPrice: basePrice,
+      basePrice: finalPrice,
+      totalPrice: finalPrice,
       
       status: 'confirmed',
-      paymentMethod: paymentMethod,
+      paymentMethod: finalPaymentMethod,
       paymentStatus: 'paid',
       
-      notes: `Cliente: ${originalData.nome || 'N/A'} | Tel: ${originalData.telefone || 'N/A'} | Pagto: ${originalData.pagamento || 'N/A'}`,
+      notes: `Cliente: ${finalCustomerName} | Tel: ${customerPhone || 'N/A'} | Pagto: ${paymentMethod || 'N/A'}`,
       createdBy: req.user._id
     };
 
-    console.log('💾 Salvando reserva...');
+    console.log('💾 === DADOS FINAIS PARA SALVAR ===');
+    console.log('👤 Nome:', reservationData.customerName);
+    console.log('📞 Telefone:', reservationData.customerPhone);
+    console.log('📧 Email:', reservationData.customerEmail);
+    console.log('💰 Preço:', reservationData.totalPrice);
 
     // ✅ CRIAR E SALVAR RESERVA
     const reservation = new Reservation(reservationData);
     const savedReservation = await reservation.save();
 
-    console.log('✅ Reserva salva:', savedReservation.reservationNumber);
+    console.log('✅ Reserva salva com sucesso:', savedReservation.reservationNumber);
+    console.log('👤 Nome salvo:', savedReservation.customerName);
+    console.log('📞 Telefone salvo:', savedReservation.customerPhone);
 
     // ✅ ATUALIZAR STATUS DO QUARTO
     await atualizarStatusQuarto(room.id, 'occupied');
@@ -263,6 +295,7 @@ router.post('/', authenticate, async (req, res) => {
           reservationNumber: savedReservation.reservationNumber,
           customerName: savedReservation.customerName,
           customerPhone: savedReservation.customerPhone,
+          customerEmail: savedReservation.customerEmail,
           roomNumber: savedReservation.roomNumber,
           checkIn: savedReservation.checkIn,
           checkOut: savedReservation.checkOut,
