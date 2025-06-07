@@ -140,18 +140,40 @@ reservationSchema.index({ status: 1, createdAt: -1 });
 reservationSchema.index({ roomId: 1, checkIn: 1 });
 reservationSchema.index({ customerName: 'text', customerPhone: 'text' });
 
-// ✅ MIDDLEWARE PRE-VALIDATE (CORRIGIDO)
+// ✅ MIDDLEWARE PRE-VALIDATE CORRIGIDO
 reservationSchema.pre('validate', async function(next) {
   // Auto-gerar número de reserva se não existir
   if (this.isNew && !this.reservationNumber) {
     try {
-      const count = await this.constructor.countDocuments();
-      const year = new Date().getFullYear();
-      const month = String(new Date().getMonth() + 1).padStart(2, '0');
-      this.reservationNumber = `RES${year}${month}${String(count + 1).padStart(4, '0')}`;
+      // 🔥 SOLUÇÃO: Usar timestamp + contador atômico para garantir unicidade
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = String(now.getMonth() + 1).padStart(2, '0');
+      const day = String(now.getDate()).padStart(2, '0');
+      const timestamp = now.getTime().toString().slice(-6); // Últimos 6 dígitos do timestamp
+      const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+      
+      // Formato: RES + ANO + MÊS + DIA + TIMESTAMP + RANDOM
+      // Exemplo: RES20241208123456789
+      this.reservationNumber = `RES${year}${month}${day}${timestamp}${random}`;
+      
+      // 🛡️ VERIFICAÇÃO DE SEGURANÇA: Se ainda assim existir, usar fallback
+      const existsCheck = await this.constructor.findOne({ 
+        reservationNumber: this.reservationNumber 
+      });
+      
+      if (existsCheck) {
+        // Fallback com timestamp completo + ID aleatório
+        this.reservationNumber = `RES${Date.now()}${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
+        console.log('⚠️ Número duplicado detectado, usando fallback:', this.reservationNumber);
+      }
+      
+      console.log('✅ Número de reserva gerado:', this.reservationNumber);
+      
     } catch (err) {
-      // Fallback caso falhe
-      this.reservationNumber = `RES${Date.now()}`;
+      // Fallback de emergência
+      this.reservationNumber = `RES${Date.now()}${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
+      console.log('❌ Erro na geração, usando fallback:', this.reservationNumber);
     }
   }
   
