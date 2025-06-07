@@ -1,488 +1,258 @@
-// routes/reservations.js - VERSÃO CORRIGIDA PARA CAPTURAR DADOS DO CLIENTE
+// models/Reservation.js - MODELO COMPLETO CORRIGIDO
 
-const express = require('express');
-const router = express.Router();
 const mongoose = require('mongoose');
-const Reservation = require('../models/Reservation');
-const Room = require('../models/Room');
-const { authenticate } = require('../middleware/auth');
 
-console.log('✅ Modelo Reservation importado com sucesso');
+// ✅ SCHEMA COMPLETO E ROBUSTO
+const reservationSchema = new mongoose.Schema({
+  // ✅ NÚMERO DA RESERVA (AUTO-GERADO)
+  reservationNumber: {
+    type: String,
+    unique: true,
+    required: true
+  },
 
-// ✅ FUNÇÃO PARA BUSCAR QUARTO DISPONÍVEL
-const buscarQuartoDisponivel = async () => {
-  try {
-    const availableRoom = await Room.findOne({ 
-      status: { $in: ['available', 'cleaning'] } 
-    }).sort({ number: 1 });
-    
-    if (availableRoom) {
-      console.log(`🏨 Quarto real encontrado: ${availableRoom.number}`);
-      return {
-        id: availableRoom._id.toString(),
-        number: availableRoom.number || '101',
-        type: availableRoom.type || 'standard'
+  // ✅ DADOS DO CLIENTE
+  customerName: { 
+    type: String, 
+    required: true,
+    trim: true,
+    default: 'Cliente não informado' 
+  },
+  customerPhone: { 
+    type: String, 
+    trim: true,
+    default: '' 
+  },
+  customerEmail: { 
+    type: String, 
+    trim: true,
+    lowercase: true,
+    default: '' 
+  },
+  customerDocument: { 
+    type: String,
+    trim: true, 
+    default: '' 
+  },
+  
+  // ✅ DADOS DO QUARTO
+  roomId: { 
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Room',
+    required: true
+  },
+  roomNumber: { 
+    type: String, 
+    required: true
+  },
+  
+  // ✅ DATAS E HORÁRIOS
+  checkIn: { 
+    type: Date, 
+    required: true 
+  },
+  checkOut: { 
+    type: Date, 
+    required: true 
+  },
+  
+  // ✅ PERÍODO E VALORES
+  periodType: { 
+    type: String,
+    enum: ['3h', '4h', '6h', '12h', 'daily', 'pernoite'],
+    default: '4h' 
+  },
+  periodName: { 
+    type: String, 
+    default: '4 HORAS' 
+  },
+  basePrice: { 
+    type: Number, 
+    required: true,
+    min: 0,
+    default: 50.00 
+  },
+  totalPrice: { 
+    type: Number, 
+    required: true,
+    min: 0,
+    default: 50.00 
+  },
+  
+  // ✅ STATUS E PAGAMENTO
+  status: {
+    type: String,
+    enum: ['pending', 'confirmed', 'checked-in', 'checked-out', 'cancelled'],
+    default: 'confirmed',
+    required: true
+  },
+  paymentMethod: { 
+    type: String,
+    enum: ['cash', 'card', 'pix', 'transfer'],
+    default: 'cash' 
+  },
+  paymentStatus: { 
+    type: String,
+    enum: ['pending', 'paid', 'refunded'],
+    default: 'paid' 
+  },
+  
+  // ✅ INFORMAÇÕES ADICIONAIS
+  notes: {
+    type: String,
+    trim: true,
+    maxlength: 500
+  },
+  
+  // ✅ AUDITORIA
+  createdBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  },
+  updatedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  }
+}, {
+  // ✅ OPÇÕES
+  timestamps: true, // createdAt e updatedAt automáticos
+  
+  // ✅ TRANSFORMAÇÃO JSON
+  toJSON: {
+    virtuals: true,
+    transform: function(doc, ret) {
+      // Compatibilidade com frontend
+      ret.cliente = {
+        nome: ret.customerName,
+        telefone: ret.customerPhone,
+        email: ret.customerEmail
       };
+      ret.quarto = ret.roomNumber;
+      ret.periodo = ret.periodName;
+      ret.valor = ret.totalPrice.toFixed(2);
+      ret.data = ret.checkIn;
+      return ret;
     }
-  } catch (error) {
-    console.log('⚠️ Quartos não encontrados:', error.message);
+  }
+});
+
+// ✅ ÍNDICES PARA PERFORMANCE
+reservationSchema.index({ status: 1, createdAt: -1 });
+reservationSchema.index({ roomId: 1, checkIn: 1 });
+reservationSchema.index({ customerName: 'text', customerPhone: 'text' });
+
+// ✅ MIDDLEWARE PRE-VALIDATE CORRIGIDO - EVITA DUPLICATAS
+reservationSchema.pre('validate', async function(next) {
+  // Auto-gerar número de reserva se não existir
+  if (this.isNew && !this.reservationNumber) {
+    try {
+      // 🔥 SOLUÇÃO: Usar timestamp + contador atômico para garantir unicidade
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = String(now.getMonth() + 1).padStart(2, '0');
+      const day = String(now.getDate()).padStart(2, '0');
+      const timestamp = now.getTime().toString().slice(-6); // Últimos 6 dígitos do timestamp
+      const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+      
+      // Formato: RES + ANO + MÊS + DIA + TIMESTAMP + RANDOM
+      // Exemplo: RES20241208123456789
+      this.reservationNumber = `RES${year}${month}${day}${timestamp}${random}`;
+      
+      // 🛡️ VERIFICAÇÃO DE SEGURANÇA: Se ainda assim existir, usar fallback
+      const existsCheck = await this.constructor.findOne({ 
+        reservationNumber: this.reservationNumber 
+      });
+      
+      if (existsCheck) {
+        // Fallback com timestamp completo + ID aleatório
+        this.reservationNumber = `RES${Date.now()}${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
+        console.log('⚠️ Número duplicado detectado, usando fallback:', this.reservationNumber);
+      }
+      
+      console.log('✅ Número de reserva gerado:', this.reservationNumber);
+      
+    } catch (err) {
+      // Fallback de emergência
+      this.reservationNumber = `RES${Date.now()}${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
+      console.log('❌ Erro na geração, usando fallback:', this.reservationNumber);
+    }
   }
   
-  // Fallback - quarto padrão
-  console.log('🏨 Usando quarto padrão: 101');
-  return {
-    id: 'room-default',
-    number: '101',
-    type: 'standard'
+  // Validar datas
+  if (this.checkOut <= this.checkIn) {
+    throw new Error('Check-out deve ser posterior ao check-in');
+  }
+  
+  next();
+});
+
+// ✅ MÉTODOS DE INSTÂNCIA
+reservationSchema.methods.getDuration = function() {
+  const diff = this.checkOut - this.checkIn;
+  const hours = Math.floor(diff / (1000 * 60 * 60));
+  const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+  return { hours, minutes, total: diff };
+};
+
+reservationSchema.methods.isActive = function() {
+  return this.status === 'checked-in';
+};
+
+reservationSchema.methods.canCheckIn = function() {
+  return this.status === 'confirmed';
+};
+
+reservationSchema.methods.canCheckOut = function() {
+  return this.status === 'checked-in';
+};
+
+// ✅ MÉTODOS ESTÁTICOS
+reservationSchema.statics.findActive = function() {
+  return this.find({ status: 'checked-in' });
+};
+
+reservationSchema.statics.findByRoom = function(roomId) {
+  return this.find({ roomId, status: { $in: ['confirmed', 'checked-in'] } });
+};
+
+reservationSchema.statics.getTodayStats = async function() {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  
+  const stats = await this.aggregate([
+    {
+      $match: {
+        createdAt: { $gte: today, $lt: tomorrow }
+      }
+    },
+    {
+      $group: {
+        _id: null,
+        total: { $sum: 1 },
+        revenue: { $sum: '$totalPrice' },
+        confirmed: {
+          $sum: { $cond: [{ $eq: ['$status', 'confirmed'] }, 1, 0] }
+        },
+        checkedIn: {
+          $sum: { $cond: [{ $eq: ['$status', 'checked-in'] }, 1, 0] }
+        },
+        checkedOut: {
+          $sum: { $cond: [{ $eq: ['$status', 'checked-out'] }, 1, 0] }
+        }
+      }
+    }
+  ]);
+  
+  return stats[0] || {
+    total: 0,
+    revenue: 0,
+    confirmed: 0,
+    checkedIn: 0,
+    checkedOut: 0
   };
 };
 
-// ✅ FUNÇÃO PARA ATUALIZAR QUARTO
-const atualizarStatusQuarto = async (roomId, status) => {
-  try {
-    if (roomId && roomId !== 'room-default') {
-      const result = await Room.findByIdAndUpdate(roomId, { 
-        status,
-        updatedAt: new Date()
-      });
-      
-      if (result) {
-        console.log(`✅ Quarto ${result.number} → ${status}`);
-      }
-    }
-  } catch (error) {
-    console.log('⚠️ Não foi possível atualizar quarto');
-  }
-};
-
-// ✅ ROTA 1: LISTAR RESERVAS
-router.get('/', authenticate, async (req, res) => {
-  try {
-    console.log('📋 [GET] Listando reservas...');
-    
-    const reservations = await Reservation.find()
-      .sort({ createdAt: -1 })
-      .limit(100)
-      .lean();
-
-    console.log(`📋 Encontradas ${reservations.length} reservas`);
-
-    const formattedReservations = reservations.map(reservation => ({
-      _id: reservation._id || '',
-      reservationNumber: reservation.reservationNumber || 'N/A',
-      
-      customer: {
-        name: reservation.customerName || 'Cliente não informado',
-        phone: reservation.customerPhone || '',
-        email: reservation.customerEmail || ''
-      },
-      room: {
-        id: reservation.roomId || 'room-default',
-        number: reservation.roomNumber || '101'
-      },
-      checkIn: reservation.checkIn || new Date(),
-      checkOut: reservation.checkOut || new Date(),
-      periodType: reservation.periodType || '4h',
-      pricing: {
-        basePrice: reservation.basePrice || 50.00,
-        totalPrice: reservation.totalPrice || 50.00
-      },
-      status: reservation.status || 'confirmed',
-      paymentMethod: reservation.paymentMethod || 'cash',
-      createdAt: reservation.createdAt || new Date(),
-      
-      // ✅ COMPATIBILIDADE COM FRONTEND ANTIGO
-      cliente: {
-        nome: reservation.customerName || 'Cliente não informado',
-        telefone: reservation.customerPhone || ''
-      },
-      data: reservation.checkIn ? new Date(reservation.checkIn).toLocaleDateString('pt-BR') : 'N/A',
-      periodo: reservation.periodName || '4 HORAS',
-      valor: (reservation.totalPrice || 50.00).toFixed(2)
-    }));
-
-    res.json({
-      success: true,
-      data: formattedReservations,
-      total: formattedReservations.length
-    });
-    
-  } catch (error) {
-    console.error('❌ Erro ao listar reservas:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Erro interno do servidor',
-      error: error.message
-    });
-  }
-});
-
-// ✅ ROTA 2: CRIAR RESERVA - CORRIGIDA PARA CAPTURAR DADOS DO CLIENTE
-router.post('/', authenticate, async (req, res) => {
-  try {
-    console.log('🆕 [POST] Criando nova reserva...');
-    console.log('📦 Body completo:', JSON.stringify(req.body, null, 2));
-
-    // ✅ EXTRAIR TODOS OS DADOS DO CLIENTE DIRETAMENTE DO BODY
-    const {
-      // Dados obrigatórios
-      checkIn,
-      checkOut,
-      periodType = '4h',
-      roomId,
-      totalPrice,
-      paymentMethod = 'Dinheiro',
-      
-      // 🚨 DADOS DO CLIENTE - CAPTURAR DIRETAMENTE
-      customerName,
-      customerPhone,
-      customerEmail, 
-      customerDocument,
-      customerId
-    } = req.body;
-
-    console.log('🔍 === DADOS EXTRAÍDOS DO BODY ===');
-    console.log('👤 customerName:', customerName);
-    console.log('📞 customerPhone:', customerPhone);
-    console.log('📧 customerEmail:', customerEmail);
-    console.log('📄 customerDocument:', customerDocument);
-    console.log('🆔 customerId:', customerId);
-
-    // ✅ VALIDAÇÕES BÁSICAS
-    if (!checkIn || !checkOut) {
-      console.log('❌ Datas obrigatórias ausentes');
-      return res.status(400).json({
-        success: false,
-        message: 'Datas de check-in e check-out são obrigatórias'
-      });
-    }
-
-    // ✅ VALIDAR E CONVERTER DATAS
-    let checkInDate, checkOutDate;
-    try {
-      checkInDate = new Date(checkIn);
-      checkOutDate = new Date(checkOut);
-      
-      if (isNaN(checkInDate.getTime()) || isNaN(checkOutDate.getTime())) {
-        throw new Error('Datas inválidas');
-      }
-    } catch (dateError) {
-      console.log('❌ Erro nas datas:', dateError.message);
-      return res.status(400).json({
-        success: false,
-        message: 'Formato de data inválido'
-      });
-    }
-
-    // ✅ BUSCAR QUARTO DISPONÍVEL
-    let room;
-    if (roomId) {
-      try {
-        room = await Room.findById(roomId);
-        if (room) {
-          room = {
-            id: room._id.toString(),
-            number: room.number,
-            type: room.type
-          };
-        }
-      } catch (error) {
-        console.log('⚠️ Erro ao buscar quarto:', error.message);
-      }
-    }
-    
-    if (!room) {
-      room = await buscarQuartoDisponivel();
-    }
-
-    // ✅ MAPEAR PERÍODO PARA NOME
-    const periodNameMap = {
-      '3h': '3 HORAS',
-      '4h': '4 HORAS',
-      '6h': '6 HORAS', 
-      '12h': '12 HORAS',
-      'daily': 'DIÁRIA',
-      'pernoite': 'PERNOITE'
-    };
-
-    // ✅ MAPEAR PREÇOS BASE
-    const priceMap = {
-      '3h': 50.00,
-      '4h': 55.00,
-      '6h': 70.00,
-      '12h': 90.00,
-      'daily': 150.00,
-      'pernoite': 120.00
-    };
-
-    // ✅ CALCULAR PREÇO FINAL
-    let finalPrice = parseFloat(totalPrice) || priceMap[periodType] || 50.00;
-    
-    console.log('💰 Preço final calculado:', finalPrice);
-
-    // ✅ MAPEAR PAGAMENTO
-    const paymentMethodMap = {
-      'Dinheiro': 'cash',
-      'Cartão': 'card', 
-      'Pix': 'pix',
-      'Transferência': 'transfer'
-    };
-
-    const finalPaymentMethod = paymentMethodMap[paymentMethod] || 'cash';
-
-    // ✅ PROCESSAR NOME DO CLIENTE - GARANTIR QUE NÃO SEJA VAZIO
-    let finalCustomerName = 'Cliente não informado';
-    
-    if (customerName && typeof customerName === 'string' && customerName.trim() !== '') {
-      finalCustomerName = customerName.trim();
-      console.log('✅ Nome do cliente válido:', finalCustomerName);
-    } else {
-      console.log('⚠️ Nome do cliente não fornecido ou inválido, usando padrão');
-    }
-
-    // ✅ DADOS SEGUROS PARA SALVAR
-    const reservationData = {
-      // 🚨 DADOS DO CLIENTE - USAR OS VALORES CORRETOS
-      customerName: finalCustomerName,
-      customerPhone: (customerPhone && typeof customerPhone === 'string') ? customerPhone.trim() : '',
-      customerEmail: (customerEmail && typeof customerEmail === 'string') ? customerEmail.trim() : '',
-      customerDocument: (customerDocument && typeof customerDocument === 'string') ? customerDocument.trim() : '',
-      
-      roomId: room.id,
-      roomNumber: room.number,
-      
-      checkIn: checkInDate,
-      checkOut: checkOutDate,
-      
-      periodType: periodType,
-      periodName: periodNameMap[periodType] || '4 HORAS',
-      
-      basePrice: finalPrice,
-      totalPrice: finalPrice,
-      
-      status: 'confirmed',
-      paymentMethod: finalPaymentMethod,
-      paymentStatus: 'paid',
-      
-      notes: `Cliente: ${finalCustomerName} | Tel: ${customerPhone || 'N/A'} | Pagto: ${paymentMethod || 'N/A'}`,
-      createdBy: req.user._id
-    };
-
-    console.log('💾 === DADOS FINAIS PARA SALVAR ===');
-    console.log('👤 Nome:', reservationData.customerName);
-    console.log('📞 Telefone:', reservationData.customerPhone);
-    console.log('📧 Email:', reservationData.customerEmail);
-    console.log('💰 Preço:', reservationData.totalPrice);
-
-    // ✅ CRIAR E SALVAR RESERVA
-    const reservation = new Reservation(reservationData);
-    const savedReservation = await reservation.save();
-
-    console.log('✅ Reserva salva com sucesso:', savedReservation.reservationNumber);
-    console.log('👤 Nome salvo:', savedReservation.customerName);
-    console.log('📞 Telefone salvo:', savedReservation.customerPhone);
-
-    // ✅ ATUALIZAR STATUS DO QUARTO
-    await atualizarStatusQuarto(room.id, 'occupied');
-
-    // ✅ RESPOSTA DE SUCESSO
-    res.status(201).json({
-      success: true,
-      message: 'Reserva criada com sucesso',
-      data: {
-        reservation: {
-          _id: savedReservation._id,
-          reservationNumber: savedReservation.reservationNumber,
-          customerName: savedReservation.customerName,
-          customerPhone: savedReservation.customerPhone,
-          customerEmail: savedReservation.customerEmail,
-          roomNumber: savedReservation.roomNumber,
-          checkIn: savedReservation.checkIn,
-          checkOut: savedReservation.checkOut,
-          periodName: savedReservation.periodName,
-          totalPrice: savedReservation.totalPrice,
-          status: savedReservation.status,
-          paymentMethod: savedReservation.paymentMethod,
-          createdAt: savedReservation.createdAt
-        }
-      }
-    });
-
-  } catch (error) {
-    console.error('❌ Erro ao criar reserva:', error);
-    
-    // ✅ TRATAR ERROS ESPECÍFICOS
-    if (error.code === 11000) {
-      return res.status(400).json({
-        success: false,
-        message: 'Número de reserva já existe'
-      });
-    }
-
-    res.status(500).json({
-      success: false,
-      message: 'Erro interno do servidor',
-      error: error.message
-    });
-  }
-});
-
-// ✅ ROTA 3: BUSCAR POR ID
-router.get('/:id', authenticate, async (req, res) => {
-  try {
-    const { id } = req.params;
-    
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({
-        success: false,
-        message: 'ID inválido'
-      });
-    }
-
-    const reservation = await Reservation.findById(id).lean();
-
-    if (!reservation) {
-      return res.status(404).json({
-        success: false,
-        message: 'Reserva não encontrada'
-      });
-    }
-
-    res.json({
-      success: true,
-      data: { reservation }
-    });
-  } catch (error) {
-    console.error('❌ Erro ao buscar reserva:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Erro interno do servidor'
-    });
-  }
-});
-
-// ✅ ROTA 4: ATUALIZAR STATUS
-router.patch('/:id/status', authenticate, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { status } = req.body;
-    
-    const allowedStatuses = ['pending', 'confirmed', 'checked-in', 'checked-out', 'cancelled'];
-    if (!allowedStatuses.includes(status)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Status inválido'
-      });
-    }
-    
-    const reservation = await Reservation.findByIdAndUpdate(
-      id,
-      { status, updatedAt: new Date() },
-      { new: true }
-    );
-
-    if (!reservation) {
-      return res.status(404).json({
-        success: false,
-        message: 'Reserva não encontrada'
-      });
-    }
-
-    // ✅ ATUALIZAR QUARTO
-    let roomStatus = 'available';
-    if (status === 'checked-in') roomStatus = 'occupied';
-    else if (status === 'checked-out') roomStatus = 'cleaning';
-    
-    await atualizarStatusQuarto(reservation.roomId, roomStatus);
-
-    res.json({
-      success: true,
-      message: `Status atualizado para ${status}`,
-      data: { reservation }
-    });
-  } catch (error) {
-    console.error('❌ Erro ao atualizar status:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Erro interno do servidor'
-    });
-  }
-});
-
-// ✅ ROTA 5: DELETAR
-router.delete('/:id', authenticate, async (req, res) => {
-  try {
-    const { id } = req.params;
-    
-    const reservation = await Reservation.findByIdAndDelete(id);
-
-    if (!reservation) {
-      return res.status(404).json({
-        success: false,
-        message: 'Reserva não encontrada'
-      });
-    }
-
-    // ✅ LIBERAR QUARTO
-    await atualizarStatusQuarto(reservation.roomId, 'available');
-
-    res.json({
-      success: true,
-      message: 'Reserva deletada com sucesso'
-    });
-  } catch (error) {
-    console.error('❌ Erro ao deletar reserva:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Erro interno do servidor'
-    });
-  }
-});
-
-// ✅ ROTA 6: ESTATÍSTICAS
-router.get('/stats/overview', authenticate, async (req, res) => {
-  try {
-    const total = await Reservation.countDocuments();
-    const active = await Reservation.countDocuments({ status: 'checked-in' });
-    const today = new Date();
-    const startOfDay = new Date(today.setHours(0, 0, 0, 0));
-    const endOfDay = new Date(today.setHours(23, 59, 59, 999));
-    
-    const todayCount = await Reservation.countDocuments({
-      createdAt: { $gte: startOfDay, $lte: endOfDay }
-    });
-
-    res.json({
-      success: true,
-      data: {
-        overview: {
-          total,
-          today: todayCount,
-          active,
-          totalReservations: total,
-          todayReservations: todayCount,
-          activeReservations: active
-        }
-      }
-    });
-  } catch (error) {
-    console.error('❌ Erro ao buscar estatísticas:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Erro interno do servidor'
-    });
-  }
-});
-
-// ✅ HEALTH CHECK
-router.get('/health', (req, res) => {
-  res.json({
-    success: true,
-    message: 'Rotas de reservas funcionando',
-    timestamp: new Date().toISOString()
-  });
-});
-
-console.log('✅ Rotas de reservas registradas com sucesso');
-
-module.exports = router;
+// ✅ EXPORTAR MODELO
+module.exports = mongoose.model('Reservation', reservationSchema);
