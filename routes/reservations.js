@@ -1,4 +1,4 @@
-// routes/reservations.js - VERSÃO COMPLETA CORRIGIDA
+// routes/reservations.js - VERSÃO COMPLETA COM SISTEMA DE CONFLITOS
 
 const express = require('express');
 const router = express.Router();
@@ -35,6 +35,140 @@ const buscarQuartoDisponivel = async () => {
     number: '101',
     type: 'standard'
   };
+};
+
+// 🔍 SISTEMA DE VERIFICAÇÃO DE CONFLITOS
+const verificarConflitoReservas = async (roomId, checkInDate, checkOutDate, excludeReservationId = null) => {
+  try {
+    console.log('🔍 === VERIFICANDO CONFLITOS ===');
+    console.log('🏨 Quarto:', roomId);
+    console.log('📅 Check-in solicitado:', checkInDate.toLocaleString('pt-BR'));
+    console.log('📅 Check-out solicitado:', checkOutDate.toLocaleString('pt-BR'));
+    
+    // Buscar reservas existentes para o mesmo quarto
+    const query = {
+      roomId: roomId,
+      status: { $in: ['confirmed', 'checked-in'] }, // Apenas reservas ativas
+    };
+    
+    // Excluir uma reserva específica (útil para edições)
+    if (excludeReservationId) {
+      query._id = { $ne: excludeReservationId };
+    }
+    
+    const reservasExistentes = await Reservation.find(query);
+    
+    console.log(`📋 Encontradas ${reservasExistentes.length} reservas ativas para este quarto`);
+    
+    // Verificar cada reserva existente
+    const conflitos = [];
+    
+    for (const reserva of reservasExistentes) {
+      const reservaCheckIn = new Date(reserva.checkIn);
+      const reservaCheckOut = new Date(reserva.checkOut);
+      
+      console.log(`🔍 Verificando reserva ${reserva.reservationNumber}:`);
+      console.log(`   📅 Período existente: ${reservaCheckIn.toLocaleString('pt-BR')} → ${reservaCheckOut.toLocaleString('pt-BR')}`);
+      
+      // ✅ LÓGICA DE DETECÇÃO DE CONFLITO
+      // Conflito ocorre quando os períodos se sobrepõem
+      const temConflito = (
+        // Nova reserva começa antes da existente terminar
+        // E nova reserva termina depois da existente começar
+        checkInDate < reservaCheckOut && checkOutDate > reservaCheckIn
+      );
+      
+      if (temConflito) {
+        console.log(`❌ CONFLITO DETECTADO com reserva ${reserva.reservationNumber}!`);
+        console.log(`   🔴 Sobreposição: ${Math.max(checkInDate, reservaCheckIn).toLocaleString('pt-BR')} → ${Math.min(checkOutDate, reservaCheckOut).toLocaleString('pt-BR')}`);
+        
+        conflitos.push({
+          reservationId: reserva._id,
+          reservationNumber: reserva.reservationNumber,
+          customerName: reserva.customerName,
+          conflictStart: Math.max(checkInDate, reservaCheckIn),
+          conflictEnd: Math.min(checkOutDate, reservaCheckOut),
+          existingPeriod: {
+            checkIn: reservaCheckIn,
+            checkOut: reservaCheckOut
+          }
+        });
+      } else {
+        console.log(`✅ Sem conflito com reserva ${reserva.reservationNumber}`);
+      }
+    }
+    
+    return {
+      hasConflict: conflitos.length > 0,
+      conflicts: conflitos,
+      totalExistingReservations: reservasExistentes.length
+    };
+    
+  } catch (error) {
+    console.error('❌ Erro ao verificar conflitos:', error);
+    // Em caso de erro, assumir que não há conflito (segurança)
+    return {
+      hasConflict: false,
+      conflicts: [],
+      error: error.message
+    };
+  }
+};
+
+// ✅ FUNÇÃO PARA SUGERIR QUARTOS ALTERNATIVOS
+const sugerirQuartosAlternativos = async (checkInDate, checkOutDate, roomTypeOriginal = null) => {
+  try {
+    console.log('🔍 Buscando quartos alternativos...');
+    
+    // Buscar todos os quartos disponíveis
+    const quartosDisponiveis = await Room.find({ 
+      status: { $in: ['available', 'cleaning'] }
+    }).sort({ number: 1 });
+    
+    const sugestoes = [];
+    
+    for (const quarto of quartosDisponiveis) {
+      const conflicto = await verificarConflitoReservas(
+        quarto._id.toString(), 
+        checkInDate, 
+        checkOutDate
+      );
+      
+      if (!conflicto.hasConflict) {
+        sugestoes.push({
+          roomId: quarto._id.toString(),
+          roomNumber: quarto.number,
+          roomType: quarto.type,
+          status: quarto.status,
+          isRecommended: quarto.type === roomTypeOriginal
+        });
+      }
+    }
+    
+    console.log(`💡 Encontrados ${sugestoes.length} quartos alternativos sem conflito`);
+    
+    return sugestoes;
+    
+  } catch (error) {
+    console.error('❌ Erro ao sugerir alternativas:', error);
+    return [];
+  }
+};
+
+// ✅ FUNÇÃO PARA FORMATAR MENSAGEM DE CONFLITO
+const formatarMensagemConflito = (conflitos) => {
+  if (conflitos.length === 0) return '';
+  
+  let mensagem = 'Conflitos detectados:\n\n';
+  
+  conflitos.forEach((conflito, index) => {
+    mensagem += `${index + 1}. Reserva #${conflito.reservationNumber}\n`;
+    mensagem += `   Cliente: ${conflito.customerName}\n`;
+    mensagem += `   Período: ${conflito.existingPeriod.checkIn.toLocaleString('pt-BR')} → ${conflito.existingPeriod.checkOut.toLocaleString('pt-BR')}\n`;
+    mensagem += `   Sobreposição: ${conflito.conflictStart.toLocaleString('pt-BR')} → ${conflito.conflictEnd.toLocaleString('pt-BR')}\n\n`;
+  });
+  
+  return mensagem;
 };
 
 // ✅ VERIFICAR SE QUARTO DEVE SER BLOQUEADO
@@ -201,7 +335,7 @@ router.get('/', authenticate, async (req, res) => {
   }
 });
 
-// ✅ ROTA 2: CRIAR RESERVA - CORRIGIDA PARA CAPTURAR DADOS DO CLIENTE
+// ✅ ROTA 2: CRIAR RESERVA - COM SISTEMA DE CONFLITOS
 router.post('/', authenticate, async (req, res) => {
   try {
     console.log('🆕 [POST] Criando nova reserva...');
@@ -277,6 +411,58 @@ router.post('/', authenticate, async (req, res) => {
     
     if (!room) {
       room = await buscarQuartoDisponivel();
+    }
+
+    // 🔍 VERIFICAR CONFLITOS DE RESERVA
+    console.log('🔍 Verificando conflitos para o quarto selecionado...');
+    const conflictoCheck = await verificarConflitoReservas(
+      room.id, 
+      checkInDate, 
+      checkOutDate
+    );
+
+    if (conflictoCheck.hasConflict) {
+      console.log('❌ CONFLITO DETECTADO! Buscando alternativas...');
+      
+      // Buscar quartos alternativos
+      const quartosAlternativos = await sugerirQuartosAlternativos(
+        checkInDate, 
+        checkOutDate, 
+        room.type
+      );
+      
+      if (quartosAlternativos.length > 0) {
+        // Usar primeiro quarto alternativo disponível
+        const quartoAlternativo = quartosAlternativos[0];
+        
+        console.log(`✅ Quarto alternativo encontrado: ${quartoAlternativo.roomNumber}`);
+        
+        room = {
+          id: quartoAlternativo.roomId,
+          number: quartoAlternativo.roomNumber,
+          type: quartoAlternativo.roomType
+        };
+        
+        // Log para informar a substituição
+        console.log(`🔄 Quarto substituído automaticamente: ${room.number}`);
+        
+      } else {
+        // Nenhum quarto disponível - retornar erro detalhado
+        const mensagemConflito = formatarMensagemConflito(conflictoCheck.conflicts);
+        
+        return res.status(409).json({
+          success: false,
+          message: 'Conflito de horários detectado',
+          details: {
+            conflicts: conflictoCheck.conflicts,
+            conflictMessage: mensagemConflito,
+            suggestedRooms: quartosAlternativos,
+            originalRoom: room.number
+          }
+        });
+      }
+    } else {
+      console.log('✅ Nenhum conflito detectado para este quarto');
     }
 
     // ✅ MAPEAR PERÍODO PARA NOME
@@ -373,8 +559,8 @@ router.post('/', authenticate, async (req, res) => {
       status: 'confirmed'
     });
 
-    // ✅ RESPOSTA DE SUCESSO
-    res.status(201).json({
+    // ✅ RESPOSTA DE SUCESSO (com info de substituição se aplicável)
+    const responseData = {
       success: true,
       message: 'Reserva criada com sucesso',
       data: {
@@ -394,7 +580,15 @@ router.post('/', authenticate, async (req, res) => {
           createdAt: savedReservation.createdAt
         }
       }
-    });
+    };
+
+    // Se houve substituição de quarto, informar
+    if (conflictoCheck.hasConflict) {
+      responseData.message = `Reserva criada com sucesso! Quarto alterado para ${room.number} devido a conflito de horários.`;
+      responseData.roomChanged = true;
+    }
+
+    res.status(201).json(responseData);
 
   } catch (error) {
     console.error('❌ Erro ao criar reserva:', error);
@@ -533,7 +727,44 @@ router.delete('/:id', authenticate, async (req, res) => {
   }
 });
 
-// ✅ ROTA 6: ESTATÍSTICAS
+// ✅ ROTA 6: VERIFICAR CONFLITOS (NOVA ROTA PARA FRONTEND)
+router.post('/check-conflicts', authenticate, async (req, res) => {
+  try {
+    const { roomId, checkIn, checkOut } = req.body;
+    
+    if (!roomId || !checkIn || !checkOut) {
+      return res.status(400).json({
+        success: false,
+        message: 'roomId, checkIn e checkOut são obrigatórios'
+      });
+    }
+    
+    const checkInDate = new Date(checkIn);
+    const checkOutDate = new Date(checkOut);
+    
+    const conflictCheck = await verificarConflitoReservas(roomId, checkInDate, checkOutDate);
+    const alternativas = conflictCheck.hasConflict ? 
+      await sugerirQuartosAlternativos(checkInDate, checkOutDate) : [];
+    
+    res.json({
+      success: true,
+      data: {
+        hasConflict: conflictCheck.hasConflict,
+        conflicts: conflictCheck.conflicts,
+        alternatives: alternativas
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Erro ao verificar conflitos:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erro interno do servidor'
+    });
+  }
+});
+
+// ✅ ROTA 7: ESTATÍSTICAS
 router.get('/stats/overview', authenticate, async (req, res) => {
   try {
     const total = await Reservation.countDocuments();
