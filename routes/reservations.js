@@ -1,4 +1,4 @@
-// routes/reservations.js - VERSÃO COMPLETA COM SISTEMA DE CONFLITOS E ESCOLHA DE QUARTO
+// routes/reservations.js - VERSÃO COMPLETA COM SISTEMA DE CONFLITOS
 
 const express = require('express');
 const router = express.Router();
@@ -335,7 +335,7 @@ router.get('/', authenticate, async (req, res) => {
   }
 });
 
-// ✅ ROTA 2: CRIAR RESERVA - COM SISTEMA DE CONFLITOS E ESCOLHA DO USUÁRIO
+// ✅ ROTA 2: CRIAR RESERVA - COM SISTEMA DE CONFLITOS
 router.post('/', authenticate, async (req, res) => {
   try {
     console.log('🆕 [POST] Criando nova reserva...');
@@ -431,25 +431,36 @@ router.post('/', authenticate, async (req, res) => {
         room.type
       );
       
-      // 🔄 SEMPRE RETORNAR CONFLITO PARA O USUÁRIO ESCOLHER
-      const mensagemConflito = formatarMensagemConflito(conflictoCheck.conflicts);
-      
-      return res.status(409).json({
-        success: false,
-        message: 'Conflito de horários detectado',
-        conflictType: 'user_choice_required',
-        details: {
-          conflicts: conflictoCheck.conflicts,
-          conflictMessage: mensagemConflito,
-          originalRoom: {
-            id: room.id,
-            number: room.number,
-            type: room.type
-          },
-          suggestedRooms: quartosAlternativos,
-          hasAlternatives: quartosAlternativos.length > 0
-        }
-      });
+      if (quartosAlternativos.length > 0) {
+        // Usar primeiro quarto alternativo disponível
+        const quartoAlternativo = quartosAlternativos[0];
+        
+        console.log(`✅ Quarto alternativo encontrado: ${quartoAlternativo.roomNumber}`);
+        
+        room = {
+          id: quartoAlternativo.roomId,
+          number: quartoAlternativo.roomNumber,
+          type: quartoAlternativo.roomType
+        };
+        
+        // Log para informar a substituição
+        console.log(`🔄 Quarto substituído automaticamente: ${room.number}`);
+        
+      } else {
+        // Nenhum quarto disponível - retornar erro detalhado
+        const mensagemConflito = formatarMensagemConflito(conflictoCheck.conflicts);
+        
+        return res.status(409).json({
+          success: false,
+          message: 'Conflito de horários detectado',
+          details: {
+            conflicts: conflictoCheck.conflicts,
+            conflictMessage: mensagemConflito,
+            suggestedRooms: quartosAlternativos,
+            originalRoom: room.number
+          }
+        });
+      }
     } else {
       console.log('✅ Nenhum conflito detectado para este quarto');
     }
@@ -548,8 +559,8 @@ router.post('/', authenticate, async (req, res) => {
       status: 'confirmed'
     });
 
-    // ✅ RESPOSTA DE SUCESSO
-    res.status(201).json({
+    // ✅ RESPOSTA DE SUCESSO (com info de substituição se aplicável)
+    const responseData = {
       success: true,
       message: 'Reserva criada com sucesso',
       data: {
@@ -569,226 +580,20 @@ router.post('/', authenticate, async (req, res) => {
           createdAt: savedReservation.createdAt
         }
       }
-    });
+    };
+
+    // Se houve substituição de quarto, informar
+    if (conflictoCheck.hasConflict) {
+      responseData.message = `Reserva criada com sucesso! Quarto alterado para ${room.number} devido a conflito de horários.`;
+      responseData.roomChanged = true;
+    }
+
+    res.status(201).json(responseData);
 
   } catch (error) {
     console.error('❌ Erro ao criar reserva:', error);
     
     // ✅ TRATAR ERROS ESPECÍFICOS
-    if (error.code === 11000) {
-      return res.status(400).json({
-        success: false,
-        message: 'Número de reserva já existe'
-      });
-    }
-
-    res.status(500).json({
-      success: false,
-      message: 'Erro interno do servidor',
-      error: error.message
-    });
-  }
-});
-
-// ✅ ROTA NOVA: CONFIRMAR RESERVA COM QUARTO ESCOLHIDO PELO USUÁRIO
-router.post('/confirm-with-room', authenticate, async (req, res) => {
-  try {
-    console.log('✅ [POST] Confirmando reserva com quarto escolhido pelo usuário...');
-    console.log('📦 Body completo:', JSON.stringify(req.body, null, 2));
-
-    const {
-      // Dados da reserva original
-      checkIn,
-      checkOut,
-      periodType = '4h',
-      totalPrice,
-      paymentMethod = 'Dinheiro',
-      customerName,
-      customerPhone,
-      customerEmail, 
-      customerDocument,
-      customerId,
-      
-      // Quarto escolhido pelo usuário
-      selectedRoomId,
-      selectedRoomNumber,
-      selectedRoomType,
-      
-      // Dados do conflito original (para logs)
-      originalRoomId,
-      conflictAcknowledged = true
-    } = req.body;
-
-    console.log('🔍 === CONFIRMAÇÃO COM QUARTO ESCOLHIDO ===');
-    console.log('🏨 Quarto original com conflito:', originalRoomId);
-    console.log('🏨 Quarto escolhido pelo usuário:', selectedRoomId, selectedRoomNumber);
-    console.log('✅ Usuário ciente do conflito:', conflictAcknowledged);
-
-    // ✅ VALIDAÇÕES BÁSICAS
-    if (!selectedRoomId || !selectedRoomNumber) {
-      return res.status(400).json({
-        success: false,
-        message: 'Quarto selecionado é obrigatório'
-      });
-    }
-
-    if (!checkIn || !checkOut) {
-      return res.status(400).json({
-        success: false,
-        message: 'Datas de check-in e check-out são obrigatórias'
-      });
-    }
-
-    // ✅ VALIDAR E CONVERTER DATAS
-    let checkInDate, checkOutDate;
-    try {
-      checkInDate = new Date(checkIn);
-      checkOutDate = new Date(checkOut);
-      
-      if (isNaN(checkInDate.getTime()) || isNaN(checkOutDate.getTime())) {
-        throw new Error('Datas inválidas');
-      }
-    } catch (dateError) {
-      return res.status(400).json({
-        success: false,
-        message: 'Formato de data inválido'
-      });
-    }
-
-    // 🔍 VERIFICAÇÃO FINAL DE CONFLITO NO QUARTO ESCOLHIDO
-    console.log('🔍 Verificação final de conflito no quarto escolhido...');
-    const finalConflictCheck = await verificarConflitoReservas(
-      selectedRoomId, 
-      checkInDate, 
-      checkOutDate
-    );
-
-    if (finalConflictCheck.hasConflict) {
-      console.log('❌ CONFLITO AINDA EXISTE NO QUARTO ESCOLHIDO!');
-      return res.status(409).json({
-        success: false,
-        message: 'O quarto escolhido também possui conflito de horários',
-        details: {
-          conflicts: finalConflictCheck.conflicts,
-          selectedRoom: selectedRoomNumber
-        }
-      });
-    }
-
-    // ✅ PREPARAR DADOS DO QUARTO
-    const room = {
-      id: selectedRoomId,
-      number: selectedRoomNumber,
-      type: selectedRoomType || 'standard'
-    };
-
-    // ✅ USAR A MESMA LÓGICA DE CRIAÇÃO DA ROTA PRINCIPAL
-    const periodNameMap = {
-      '3h': '3 HORAS',
-      '4h': '4 HORAS',
-      '6h': '6 HORAS', 
-      '12h': '12 HORAS',
-      'daily': 'DIÁRIA',
-      'pernoite': 'PERNOITE'
-    };
-
-    const priceMap = {
-      '3h': 50.00,
-      '4h': 55.00,
-      '6h': 70.00,
-      '12h': 90.00,
-      'daily': 150.00,
-      'pernoite': 120.00
-    };
-
-    let finalPrice = parseFloat(totalPrice) || priceMap[periodType] || 50.00;
-
-    const paymentMethodMap = {
-      'Dinheiro': 'cash',
-      'Cartão': 'card', 
-      'Pix': 'pix',
-      'Transferência': 'transfer'
-    };
-
-    const finalPaymentMethod = paymentMethodMap[paymentMethod] || 'cash';
-
-    let finalCustomerName = 'Cliente não informado';
-    if (customerName && typeof customerName === 'string' && customerName.trim() !== '') {
-      finalCustomerName = customerName.trim();
-    }
-
-    // ✅ DADOS PARA SALVAR
-    const reservationData = {
-      customerName: finalCustomerName,
-      customerPhone: (customerPhone && typeof customerPhone === 'string') ? customerPhone.trim() : '',
-      customerEmail: (customerEmail && typeof customerEmail === 'string') ? customerEmail.trim() : '',
-      customerDocument: (customerDocument && typeof customerDocument === 'string') ? customerDocument.trim() : '',
-      
-      roomId: room.id,
-      roomNumber: room.number,
-      
-      checkIn: checkInDate,
-      checkOut: checkOutDate,
-      
-      periodType: periodType,
-      periodName: periodNameMap[periodType] || '4 HORAS',
-      
-      basePrice: finalPrice,
-      totalPrice: finalPrice,
-      
-      status: 'confirmed',
-      paymentMethod: finalPaymentMethod,
-      paymentStatus: 'paid',
-      
-      notes: `QUARTO ESCOLHIDO PELO USUÁRIO após conflito | Cliente: ${finalCustomerName} | Tel: ${customerPhone || 'N/A'} | Pagto: ${paymentMethod || 'N/A'}`,
-      createdBy: req.user._id
-    };
-
-    console.log('💾 === DADOS FINAIS PARA SALVAR ===');
-    console.log('👤 Nome:', reservationData.customerName);
-    console.log('🏨 Quarto escolhido:', reservationData.roomNumber);
-    console.log('💰 Preço:', reservationData.totalPrice);
-
-    // ✅ CRIAR E SALVAR RESERVA
-    const reservation = new Reservation(reservationData);
-    const savedReservation = await reservation.save();
-
-    console.log('✅ Reserva confirmada com quarto escolhido:', savedReservation.reservationNumber);
-
-    // ✅ GESTÃO DO QUARTO
-    await gerenciarStatusQuarto(room.id, 'criar_reserva', {
-      checkInDate: checkInDate,
-      checkOutDate: checkOutDate,
-      status: 'confirmed'
-    });
-
-    // ✅ RESPOSTA DE SUCESSO
-    res.status(201).json({
-      success: true,
-      message: `Reserva criada com sucesso no quarto ${room.number}!`,
-      userChoice: true,
-      data: {
-        reservation: {
-          _id: savedReservation._id,
-          reservationNumber: savedReservation.reservationNumber,
-          customerName: savedReservation.customerName,
-          customerPhone: savedReservation.customerPhone,
-          customerEmail: savedReservation.customerEmail,
-          roomNumber: savedReservation.roomNumber,
-          checkIn: savedReservation.checkIn,
-          checkOut: savedReservation.checkOut,
-          periodName: savedReservation.periodName,
-          totalPrice: savedReservation.totalPrice,
-          status: savedReservation.status,
-          paymentMethod: savedReservation.paymentMethod,
-          createdAt: savedReservation.createdAt
-        }
-      }
-    });
-
-  } catch (error) {
-    console.error('❌ Erro ao confirmar reserva com quarto escolhido:', error);
-    
     if (error.code === 11000) {
       return res.status(400).json({
         success: false,
@@ -998,11 +803,11 @@ router.get('/stats/overview', authenticate, async (req, res) => {
 router.get('/health', (req, res) => {
   res.json({
     success: true,
-    message: 'Rotas de reservas funcionando com sistema completo de conflitos',
+    message: 'Rotas de reservas funcionando',
     timestamp: new Date().toISOString()
   });
 });
 
-console.log('✅ Rotas de reservas registradas com sucesso - Sistema completo de conflitos ativo');
+console.log('✅ Rotas de reservas registradas com sucesso');
 
 module.exports = router;
