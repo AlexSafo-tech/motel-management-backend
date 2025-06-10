@@ -1,255 +1,300 @@
-// ===============================================
-// 2. ENDPOINTS DO BACKEND (routes/users.js)
-// ===============================================
-
+// routes/users.js - CORRIGIDO: Importações e funções corretas
 const express = require('express');
-const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
-const User = require('../models/User');
-const { verificarPermissao, criarLogAuditoria } = require('../middleware/auth');
-
 const router = express.Router();
+const User = require('../models/User');
 
-// ✅ LISTAR USUÁRIOS (COM PERMISSÕES)
-router.get('/', verificarPermissao('usuarios.visualizar'), async (req, res) => {
+// ✅ IMPORTAR CORRETAMENTE AS FUNÇÕES DO MIDDLEWARE
+const { 
+  authenticate, 
+  authorize, 
+  checkPermission,
+  checkOwnershipOrAdmin 
+} = require('../middleware/auth');
+
+// ✅ GET /api/users - Listar usuários
+router.get('/', authenticate, authorize('admin', 'manager'), async (req, res) => {
   try {
-    const usuarios = await User.find()
-      .select('-senha') // Não retornar senha
-      .populate('criadoPor', 'nomeCompleto email')
-      .sort({ createdAt: -1 });
+    const { page = 1, limit = 10, search, role, isActive } = req.query;
+    
+    // Construir filtros
+    const filters = {};
+    if (search) {
+      filters.$or = [
+        { name: { $regex: search, $options: 'i' } },
+        { email: { $regex: search, $options: 'i' } }
+      ];
+    }
+    if (role) filters.role = role;
+    if (isActive !== undefined) filters.isActive = isActive === 'true';
+
+    // Executar consulta
+    const users = await User.find(filters)
+      .select('-password')
+      .sort({ createdAt: -1 })
+      .limit(limit * 1)
+      .skip((page - 1) * limit);
+
+    const total = await User.countDocuments(filters);
 
     res.json({
       success: true,
-      data: usuarios,
-      total: usuarios.length
+      data: {
+        users,
+        pagination: {
+          current: parseInt(page),
+          pages: Math.ceil(total / limit),
+          total,
+          limit: parseInt(limit)
+        }
+      }
     });
 
   } catch (error) {
     console.error('Erro ao listar usuários:', error);
     res.status(500).json({
       success: false,
-      message: error.message
+      message: 'Erro interno do servidor'
     });
   }
 });
 
-// ✅ CRIAR USUÁRIO
-router.post('/', verificarPermissao('usuarios.criar'), async (req, res) => {
+// ✅ GET /api/users/:id - Obter usuário específico
+router.get('/:id', authenticate, checkOwnershipOrAdmin, async (req, res) => {
   try {
-    const { 
-      nomeCompleto, 
-      email, 
-      senha, 
-      cpf, 
-      telefone, 
-      role, 
-      permissoes 
-    } = req.body;
+    const user = await User.findById(req.params.id).select('-password');
 
-    // Verificar se email já existe
-    const emailExistente = await User.findOne({ email });
-    if (emailExistente) {
-      return res.status(400).json({
+    if (!user) {
+      return res.status(404).json({
         success: false,
-        message: 'Email já está em uso'
+        message: 'Usuário não encontrado'
       });
     }
 
-    // Verificar CPF se fornecido
-    if (cpf) {
-      const cpfExistente = await User.findOne({ cpf });
-      if (cpfExistente) {
-        return res.status(400).json({
-          success: false,
-          message: 'CPF já está em uso'
-        });
-      }
-    }
-
-    // Criptografar senha
-    const senhaHash = await bcrypt.hash(senha, 12);
-
-    // Criar usuário
-    const novoUsuario = new User({
-      nomeCompleto,
-      email: email.toLowerCase(),
-      senha: senhaHash,
-      cpf,
-      telefone,
-      role,
-      permissoes,
-      criadoPor: req.user._id
+    res.json({
+      success: true,
+      data: { user }
     });
 
-    await novoUsuario.save();
+  } catch (error) {
+    console.error('Erro ao obter usuário:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erro interno do servidor'
+    });
+  }
+});
 
-    // Log de auditoria
-    await criarLogAuditoria(
-      req.user._id,
-      'usuario_criado',
-      'usuario',
-      novoUsuario._id,
-      {
-        usuario: nomeCompleto,
-        email,
-        role
-      },
-      req
-    );
+// ✅ POST /api/users - Criar usuário
+router.post('/', authenticate, authorize('admin'), async (req, res) => {
+  try {
+    const { name, email, password, role = 'user', permissions = {} } = req.body;
+
+    // Validações
+    if (!name || !email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Nome, email e senha são obrigatórios'
+      });
+    }
+
+    // Verificar se usuário já existe
+    const existingUser = await User.findOne({ email: email.toLowerCase() });
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        message: 'Usuário já existe com este email'
+      });
+    }
+
+    // Criar usuário
+    const user = new User({
+      name,
+      email: email.toLowerCase(),
+      password,
+      role,
+      permissions,
+      isActive: true,
+      isVerified: true
+    });
+
+    await user.save();
 
     // Retornar usuário sem senha
-    const usuarioResposta = novoUsuario.toObject();
-    delete usuarioResposta.senha;
+    const userResponse = user.toObject();
+    delete userResponse.password;
 
     res.status(201).json({
       success: true,
-      data: usuarioResposta,
-      message: 'Usuário criado com sucesso!'
+      message: 'Usuário criado com sucesso',
+      data: { user: userResponse }
     });
 
   } catch (error) {
     console.error('Erro ao criar usuário:', error);
     res.status(500).json({
       success: false,
-      message: error.message
+      message: 'Erro interno do servidor'
     });
   }
 });
 
-// ✅ ATUALIZAR USUÁRIO (COM PERMISSÕES)
-router.put('/:id', verificarPermissao('usuarios.editar'), async (req, res) => {
+// ✅ PUT /api/users/:id - Atualizar usuário
+router.put('/:id', authenticate, checkOwnershipOrAdmin, async (req, res) => {
   try {
-    const { id } = req.params;
-    const { 
-      nomeCompleto, 
-      email, 
-      cpf, 
-      telefone, 
-      role, 
-      permissoes, 
-      ativo 
-    } = req.body;
+    const { name, email, role, permissions, isActive } = req.body;
+    const userId = req.params.id;
 
-    const usuario = await User.findById(id);
-    if (!usuario) {
+    const user = await User.findById(userId);
+    if (!user) {
       return res.status(404).json({
         success: false,
         message: 'Usuário não encontrado'
       });
     }
 
-    // Salvar dados anteriores para auditoria
-    const dadosAnteriores = {
-      nomeCompleto: usuario.nomeCompleto,
-      email: usuario.email,
-      role: usuario.role,
-      ativo: usuario.ativo
-    };
-
-    // Verificar email único
-    if (email && email !== usuario.email) {
-      const emailExistente = await User.findOne({ 
+    // Verificar se email já existe (se mudou)
+    if (email && email !== user.email) {
+      const existingUser = await User.findOne({ 
         email: email.toLowerCase(),
-        _id: { $ne: id }
+        _id: { $ne: userId }
       });
-      if (emailExistente) {
+      if (existingUser) {
         return res.status(400).json({
           success: false,
-          message: 'Email já está em uso'
-        });
-      }
-    }
-
-    // Verificar CPF único
-    if (cpf && cpf !== usuario.cpf) {
-      const cpfExistente = await User.findOne({ 
-        cpf,
-        _id: { $ne: id }
-      });
-      if (cpfExistente) {
-        return res.status(400).json({
-          success: false,
-          message: 'CPF já está em uso'
+          message: 'Email já está em uso por outro usuário'
         });
       }
     }
 
     // Atualizar campos
-    if (nomeCompleto) usuario.nomeCompleto = nomeCompleto;
-    if (email) usuario.email = email.toLowerCase();
-    if (cpf !== undefined) usuario.cpf = cpf;
-    if (telefone !== undefined) usuario.telefone = telefone;
-    if (role) usuario.role = role;
-    if (permissoes) usuario.permissoes = permissoes;
-    if (ativo !== undefined) usuario.ativo = ativo;
-    
-    usuario.updatedAt = new Date();
+    if (name) user.name = name;
+    if (email) user.email = email.toLowerCase();
+    if (role && req.user.role === 'admin') user.role = role; // Só admin pode mudar role
+    if (permissions && req.user.role === 'admin') user.permissions = permissions;
+    if (isActive !== undefined && req.user.role === 'admin') user.isActive = isActive;
 
-    await usuario.save();
-
-    // Log de auditoria
-    await criarLogAuditoria(
-      req.user._id,
-      'usuario_atualizado',
-      'usuario',
-      usuario._id,
-      {
-        antes: dadosAnteriores,
-        depois: {
-          nomeCompleto: usuario.nomeCompleto,
-          email: usuario.email,
-          role: usuario.role,
-          ativo: usuario.ativo
-        }
-      },
-      req
-    );
+    await user.save();
 
     // Retornar usuário sem senha
-    const usuarioResposta = usuario.toObject();
-    delete usuarioResposta.senha;
+    const userResponse = user.toObject();
+    delete userResponse.password;
 
     res.json({
       success: true,
-      data: usuarioResposta,
-      message: 'Usuário atualizado com sucesso!'
+      message: 'Usuário atualizado com sucesso',
+      data: { user: userResponse }
     });
 
   } catch (error) {
     console.error('Erro ao atualizar usuário:', error);
     res.status(500).json({
       success: false,
-      message: error.message
+      message: 'Erro interno do servidor'
     });
   }
 });
 
-// ✅ ALTERAR SENHA
-router.patch('/:id/senha', verificarPermissao('usuarios.editar'), async (req, res) => {
+// ✅ DELETE /api/users/:id - Deletar usuário
+router.delete('/:id', authenticate, authorize('admin'), async (req, res) => {
   try {
-    const { id } = req.params;
-    const { senhaAtual, novaSenha } = req.body;
+    const userId = req.params.id;
 
-    const usuario = await User.findById(id);
-    if (!usuario) {
+    // Não permitir que admin delete a si mesmo
+    if (userId === req.user._id.toString()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Você não pode deletar sua própria conta'
+      });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
       return res.status(404).json({
         success: false,
         message: 'Usuário não encontrado'
       });
     }
 
-    // Se não for o próprio usuário, verificar se é admin
-    if (req.user._id.toString() !== id && req.user.role !== 'admin') {
-      return res.status(403).json({
+    await User.findByIdAndDelete(userId);
+
+    res.json({
+      success: true,
+      message: 'Usuário deletado com sucesso'
+    });
+
+  } catch (error) {
+    console.error('Erro ao deletar usuário:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erro interno do servidor'
+    });
+  }
+});
+
+// ✅ PATCH /api/users/:id/activate - Ativar/desativar usuário
+router.patch('/:id/activate', authenticate, authorize('admin'), async (req, res) => {
+  try {
+    const { isActive } = req.body;
+    const userId = req.params.id;
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({
         success: false,
-        message: 'Apenas o próprio usuário ou admin pode alterar a senha'
+        message: 'Usuário não encontrado'
       });
     }
 
-    // Verificar senha atual (exceto se for admin alterando outro usuário)
-    if (req.user._id.toString() === id) {
-      const senhaValida = await bcrypt.compare(senhaAtual, usuario.senha);
-      if (!senhaValida) {
+    user.isActive = isActive;
+    await user.save();
+
+    res.json({
+      success: true,
+      message: `Usuário ${isActive ? 'ativado' : 'desativado'} com sucesso`,
+      data: { 
+        user: {
+          id: user._id,
+          name: user.name,
+          email: user.email,
+          isActive: user.isActive
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Erro ao ativar/desativar usuário:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erro interno do servidor'
+    });
+  }
+});
+
+// ✅ POST /api/users/:id/change-password - Mudar senha
+router.post('/:id/change-password', authenticate, checkOwnershipOrAdmin, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    const userId = req.params.id;
+
+    if (!newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: 'Nova senha é obrigatória'
+      });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'Usuário não encontrado'
+      });
+    }
+
+    // Se não for admin, verificar senha atual
+    if (req.user.role !== 'admin' && currentPassword) {
+      const isCurrentPasswordValid = await user.comparePassword(currentPassword);
+      if (!isCurrentPasswordValid) {
         return res.status(400).json({
           success: false,
           message: 'Senha atual incorreta'
@@ -257,216 +302,20 @@ router.patch('/:id/senha', verificarPermissao('usuarios.editar'), async (req, re
       }
     }
 
-    // Criptografar nova senha
-    const novaSenhaHash = await bcrypt.hash(novaSenha, 12);
-    usuario.senha = novaSenhaHash;
-    usuario.updatedAt = new Date();
-
-    await usuario.save();
-
-    // Log de auditoria
-    await criarLogAuditoria(
-      req.user._id,
-      'senha_alterada',
-      'usuario',
-      usuario._id,
-      {
-        alteradoPor: req.user.nomeCompleto,
-        usuario: usuario.nomeCompleto
-      },
-      req
-    );
+    // Atualizar senha
+    user.password = newPassword;
+    await user.save();
 
     res.json({
       success: true,
-      message: 'Senha alterada com sucesso!'
+      message: 'Senha alterada com sucesso'
     });
 
   } catch (error) {
     console.error('Erro ao alterar senha:', error);
     res.status(500).json({
       success: false,
-      message: error.message
-    });
-  }
-});
-
-// ✅ EXCLUIR USUÁRIO
-router.delete('/:id', verificarPermissao('usuarios.excluir'), async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    if (req.user._id.toString() === id) {
-      return res.status(400).json({
-        success: false,
-        message: 'Você não pode excluir sua própria conta'
-      });
-    }
-
-    const usuario = await User.findById(id);
-    if (!usuario) {
-      return res.status(404).json({
-        success: false,
-        message: 'Usuário não encontrado'
-      });
-    }
-
-    // Salvar dados para auditoria
-    const dadosUsuario = {
-      nomeCompleto: usuario.nomeCompleto,
-      email: usuario.email,
-      role: usuario.role
-    };
-
-    await User.findByIdAndDelete(id);
-
-    // Log de auditoria
-    await criarLogAuditoria(
-      req.user._id,
-      'usuario_excluido',
-      'usuario',
-      id,
-      {
-        usuarioExcluido: dadosUsuario
-      },
-      req
-    );
-
-    res.json({
-      success: true,
-      message: 'Usuário excluído com sucesso!'
-    });
-
-  } catch (error) {
-    console.error('Erro ao excluir usuário:', error);
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
-  }
-});
-
-// ✅ OBTER ESTRUTURA DE PERMISSÕES DISPONÍVEIS
-router.get('/permissions-structure', async (req, res) => {
-  try {
-    const estruturaPermissoes = {
-      dashboard: {
-        nome: 'Dashboard',
-        icone: '📊',
-        permissoes: {
-          visualizar: 'Visualizar dashboard',
-          relatorios: 'Acessar relatórios',
-          estatisticas: 'Ver estatísticas avançadas'
-        }
-      },
-      reservas: {
-        nome: 'Reservas',
-        icone: '📅',
-        permissoes: {
-          visualizar: 'Visualizar reservas',
-          criar: 'Criar nova reserva',
-          editar: 'Editar reservas',
-          cancelar: 'Cancelar reservas',
-          checkin: 'Fazer check-in',
-          checkout: 'Fazer check-out',
-          relatorios: 'Relatórios de reservas'
-        }
-      },
-      pedidos: {
-        nome: 'Pedidos',
-        icone: '🍽️',
-        permissoes: {
-          visualizar: 'Visualizar pedidos',
-          criar: 'Criar novos pedidos',
-          editar: 'Editar pedidos',
-          cancelar: 'Cancelar pedidos',
-          controleEstoque: 'Controlar estoque',
-          configurarCardapio: 'Configurar cardápio',
-          relatorios: 'Relatórios de pedidos'
-        }
-      },
-      quartos: {
-        nome: 'Quartos',
-        icone: '🏨',
-        permissoes: {
-          visualizar: 'Visualizar quartos',
-          criar: 'Criar novos quartos',
-          editar: 'Editar quartos',
-          excluir: 'Excluir quartos',
-          alterarStatus: 'Alterar status dos quartos',
-          configuracoes: 'Configurações de quartos',
-          manutencao: 'Gerenciar manutenção'
-        }
-      },
-      produtos: {
-        nome: 'Produtos',
-        icone: '📦',
-        permissoes: {
-          visualizar: 'Visualizar produtos',
-          criar: 'Criar novos produtos',
-          editar: 'Editar produtos',
-          excluir: 'Excluir produtos',
-          gerenciarEstoque: 'Gerenciar estoque',
-          configurarPrecos: 'Configurar preços',
-          categorias: 'Gerenciar categorias'
-        }
-      },
-      periodos: {
-        nome: 'Períodos',
-        icone: '⏰',
-        permissoes: {
-          visualizar: 'Visualizar períodos',
-          criar: 'Criar novos períodos',
-          editar: 'Editar períodos',
-          excluir: 'Excluir períodos',
-          configurarPrecos: 'Configurar preços por período'
-        }
-      },
-      financeiro: {
-        nome: 'Financeiro',
-        icone: '💰',
-        permissoes: {
-          visualizar: 'Visualizar dados financeiros',
-          relatorios: 'Gerar relatórios financeiros',
-          faturamento: 'Gerenciar faturamento',
-          despesas: 'Controlar despesas',
-          exportar: 'Exportar dados financeiros'
-        }
-      },
-      usuarios: {
-        nome: 'Usuários',
-        icone: '👥',
-        permissoes: {
-          visualizar: 'Visualizar usuários',
-          criar: 'Criar novos usuários',
-          editar: 'Editar usuários',
-          excluir: 'Excluir usuários',
-          gerenciarPermissoes: 'Gerenciar permissões',
-          logs: 'Ver logs de auditoria'
-        }
-      },
-      configuracoes: {
-        nome: 'Configurações',
-        icone: '⚙️',
-        permissoes: {
-          sistema: 'Configurações do sistema',
-          backup: 'Gerenciar backups',
-          integracao: 'Configurar integrações',
-          personalização: 'Personalizar interface'
-        }
-      }
-    };
-
-    res.json({
-      success: true,
-      data: estruturaPermissoes
-    });
-
-  } catch (error) {
-    console.error('Erro ao obter estrutura de permissões:', error);
-    res.status(500).json({
-      success: false,
-      message: error.message
+      message: 'Erro interno do servidor'
     });
   }
 });
