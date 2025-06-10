@@ -1,4 +1,5 @@
-// routes/users.js - CORRIGIDO: Importações e funções corretas
+// routes/users.js - CORRIGIDO PARA COMPATIBILIDADE COM MONGODB REAL
+
 const express = require('express');
 const router = express.Router();
 const User = require('../models/User');
@@ -11,35 +12,49 @@ const {
   checkOwnershipOrAdmin 
 } = require('../middleware/auth');
 
-// ✅ GET /api/users - Listar usuários
+// ✅ GET /api/users - Listar usuários (CORRIGIDO PARA MONGODB REAL)
 router.get('/', authenticate, authorize('admin', 'manager'), async (req, res) => {
   try {
-    const { page = 1, limit = 10, search, role, isActive } = req.query;
+    const { page = 1, limit = 10, search, role, ativo } = req.query;
     
-    // Construir filtros
+    // Construir filtros compatíveis com MongoDB real
     const filters = {};
     if (search) {
       filters.$or = [
-        { name: { $regex: search, $options: 'i' } },
+        { nomeCompleto: { $regex: search, $options: 'i' } },
         { email: { $regex: search, $options: 'i' } }
       ];
     }
     if (role) filters.role = role;
-    if (isActive !== undefined) filters.isActive = isActive === 'true';
+    if (ativo !== undefined) filters.ativo = ativo === 'true';
 
     // Executar consulta
     const users = await User.find(filters)
-      .select('-password')
+      .select('-password -senha')
       .sort({ createdAt: -1 })
       .limit(limit * 1)
       .skip((page - 1) * limit);
 
     const total = await User.countDocuments(filters);
 
+    // ✅ MAPEAR DADOS PARA FORMATO ESPERADO PELO FRONTEND
+    const mappedUsers = users.map(user => ({
+      id: user._id,
+      name: user.nomeCompleto || user.name || 'Usuário',
+      email: user.email,
+      role: user.role,
+      isActive: user.ativo || user.isActive || false,
+      avatar: user.avatar || '👤',
+      permissions: user.permissoes || user.permissions || {},
+      lastLogin: user.ultimoLogin || user.lastLogin,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt
+    }));
+
     res.json({
       success: true,
       data: {
-        users,
+        users: mappedUsers,
         pagination: {
           current: parseInt(page),
           pages: Math.ceil(total / limit),
@@ -58,10 +73,10 @@ router.get('/', authenticate, authorize('admin', 'manager'), async (req, res) =>
   }
 });
 
-// ✅ GET /api/users/:id - Obter usuário específico
+// ✅ GET /api/users/:id - Obter usuário específico (CORRIGIDO)
 router.get('/:id', authenticate, checkOwnershipOrAdmin, async (req, res) => {
   try {
-    const user = await User.findById(req.params.id).select('-password');
+    const user = await User.findById(req.params.id).select('-password -senha');
 
     if (!user) {
       return res.status(404).json({
@@ -70,9 +85,25 @@ router.get('/:id', authenticate, checkOwnershipOrAdmin, async (req, res) => {
       });
     }
 
+    // ✅ MAPEAR DADOS PARA FORMATO ESPERADO
+    const mappedUser = {
+      id: user._id,
+      name: user.nomeCompleto || user.name || 'Usuário',
+      email: user.email,
+      role: user.role,
+      isActive: user.ativo || user.isActive || false,
+      avatar: user.avatar || '👤',
+      permissions: user.permissoes || user.permissions || {},
+      lastLogin: user.ultimoLogin || user.lastLogin,
+      cpf: user.cpf,
+      telefone: user.telefone,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt
+    };
+
     res.json({
       success: true,
-      data: { user }
+      data: { user: mappedUser }
     });
 
   } catch (error) {
@@ -84,13 +115,16 @@ router.get('/:id', authenticate, checkOwnershipOrAdmin, async (req, res) => {
   }
 });
 
-// ✅ POST /api/users - Criar usuário
+// ✅ POST /api/users - Criar usuário (CORRIGIDO)
 router.post('/', authenticate, authorize('admin'), async (req, res) => {
   try {
-    const { name, email, password, role = 'user', permissions = {} } = req.body;
+    const { name, nomeCompleto, email, password, senha, role = 'funcionario', permissions, permissoes } = req.body;
 
-    // Validações
-    if (!name || !email || !password) {
+    // Validações flexíveis
+    const userName = nomeCompleto || name;
+    const userPassword = senha || password;
+    
+    if (!userName || !email || !userPassword) {
       return res.status(400).json({
         success: false,
         message: 'Nome, email e senha são obrigatórios'
@@ -106,22 +140,31 @@ router.post('/', authenticate, authorize('admin'), async (req, res) => {
       });
     }
 
-    // Criar usuário
-    const user = new User({
-      name,
+    // ✅ CRIAR USUÁRIO COM CAMPOS COMPATÍVEIS
+    const userData = {
+      nomeCompleto: userName,
       email: email.toLowerCase(),
-      password,
+      senha: userPassword,
       role,
-      permissions,
-      isActive: true,
-      isVerified: true
-    });
+      ativo: true,
+      permissoes: permissoes || permissions || {},
+      avatar: '👤'
+    };
 
+    const user = new User(userData);
     await user.save();
 
-    // Retornar usuário sem senha
-    const userResponse = user.toObject();
-    delete userResponse.password;
+    // ✅ MAPEAR RESPOSTA
+    const userResponse = {
+      id: user._id,
+      name: user.nomeCompleto,
+      email: user.email,
+      role: user.role,
+      isActive: user.ativo,
+      avatar: user.avatar,
+      permissions: user.permissoes,
+      createdAt: user.createdAt
+    };
 
     res.status(201).json({
       success: true,
@@ -138,10 +181,10 @@ router.post('/', authenticate, authorize('admin'), async (req, res) => {
   }
 });
 
-// ✅ PUT /api/users/:id - Atualizar usuário
+// ✅ PUT /api/users/:id - Atualizar usuário (CORRIGIDO)
 router.put('/:id', authenticate, checkOwnershipOrAdmin, async (req, res) => {
   try {
-    const { name, email, role, permissions, isActive } = req.body;
+    const { name, nomeCompleto, email, role, permissions, permissoes, isActive, ativo } = req.body;
     const userId = req.params.id;
 
     const user = await User.findById(userId);
@@ -166,18 +209,30 @@ router.put('/:id', authenticate, checkOwnershipOrAdmin, async (req, res) => {
       }
     }
 
-    // Atualizar campos
-    if (name) user.name = name;
+    // ✅ ATUALIZAR CAMPOS COMPATÍVEIS
+    if (nomeCompleto || name) user.nomeCompleto = nomeCompleto || name;
     if (email) user.email = email.toLowerCase();
-    if (role && req.user.role === 'admin') user.role = role; // Só admin pode mudar role
-    if (permissions && req.user.role === 'admin') user.permissions = permissions;
-    if (isActive !== undefined && req.user.role === 'admin') user.isActive = isActive;
+    if (role && req.user.role === 'admin') user.role = role;
+    if ((permissoes || permissions) && req.user.role === 'admin') {
+      user.permissoes = permissoes || permissions;
+    }
+    if ((ativo !== undefined || isActive !== undefined) && req.user.role === 'admin') {
+      user.ativo = ativo !== undefined ? ativo : isActive;
+    }
 
     await user.save();
 
-    // Retornar usuário sem senha
-    const userResponse = user.toObject();
-    delete userResponse.password;
+    // ✅ MAPEAR RESPOSTA
+    const userResponse = {
+      id: user._id,
+      name: user.nomeCompleto,
+      email: user.email,
+      role: user.role,
+      isActive: user.ativo,
+      avatar: user.avatar,
+      permissions: user.permissoes,
+      updatedAt: user.updatedAt
+    };
 
     res.json({
       success: true,
@@ -231,10 +286,10 @@ router.delete('/:id', authenticate, authorize('admin'), async (req, res) => {
   }
 });
 
-// ✅ PATCH /api/users/:id/activate - Ativar/desativar usuário
+// ✅ PATCH /api/users/:id/activate - Ativar/desativar usuário (CORRIGIDO)
 router.patch('/:id/activate', authenticate, authorize('admin'), async (req, res) => {
   try {
-    const { isActive } = req.body;
+    const { isActive, ativo } = req.body;
     const userId = req.params.id;
 
     const user = await User.findById(userId);
@@ -245,18 +300,20 @@ router.patch('/:id/activate', authenticate, authorize('admin'), async (req, res)
       });
     }
 
-    user.isActive = isActive;
+    // ✅ USAR CAMPO CORRETO DO MONGODB
+    const activeStatus = ativo !== undefined ? ativo : isActive;
+    user.ativo = activeStatus;
     await user.save();
 
     res.json({
       success: true,
-      message: `Usuário ${isActive ? 'ativado' : 'desativado'} com sucesso`,
+      message: `Usuário ${activeStatus ? 'ativado' : 'desativado'} com sucesso`,
       data: { 
         user: {
           id: user._id,
-          name: user.name,
+          name: user.nomeCompleto,
           email: user.email,
-          isActive: user.isActive
+          isActive: user.ativo
         }
       }
     });
@@ -270,13 +327,17 @@ router.patch('/:id/activate', authenticate, authorize('admin'), async (req, res)
   }
 });
 
-// ✅ POST /api/users/:id/change-password - Mudar senha
+// ✅ POST /api/users/:id/change-password - Mudar senha (CORRIGIDO)
 router.post('/:id/change-password', authenticate, checkOwnershipOrAdmin, async (req, res) => {
   try {
-    const { currentPassword, newPassword } = req.body;
+    const { currentPassword, newPassword, senhaNova, senhaAtual } = req.body;
     const userId = req.params.id;
 
-    if (!newPassword) {
+    // Flexibilidade nos nomes dos campos
+    const newPass = newPassword || senhaNova;
+    const currentPass = currentPassword || senhaAtual;
+
+    if (!newPass) {
       return res.status(400).json({
         success: false,
         message: 'Nova senha é obrigatória'
@@ -292,8 +353,11 @@ router.post('/:id/change-password', authenticate, checkOwnershipOrAdmin, async (
     }
 
     // Se não for admin, verificar senha atual
-    if (req.user.role !== 'admin' && currentPassword) {
-      const isCurrentPasswordValid = await user.comparePassword(currentPassword);
+    if (req.user.role !== 'admin' && currentPass) {
+      const bcrypt = require('bcrypt');
+      const currentPasswordField = user.senha || user.password;
+      const isCurrentPasswordValid = await bcrypt.compare(currentPass, currentPasswordField);
+      
       if (!isCurrentPasswordValid) {
         return res.status(400).json({
           success: false,
@@ -302,8 +366,16 @@ router.post('/:id/change-password', authenticate, checkOwnershipOrAdmin, async (
       }
     }
 
-    // Atualizar senha
-    user.password = newPassword;
+    // Atualizar senha (usar campo que existir)
+    const bcrypt = require('bcrypt');
+    const hashedPassword = await bcrypt.hash(newPass, 10);
+    
+    if (user.senha !== undefined) {
+      user.senha = hashedPassword;
+    } else {
+      user.password = hashedPassword;
+    }
+    
     await user.save();
 
     res.json({
