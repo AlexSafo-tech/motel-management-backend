@@ -1,4 +1,4 @@
-// routes/auth.js - Rotas de autenticação
+// routes/auth.js - Rotas de autenticação CORRIGIDAS
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
@@ -6,8 +6,8 @@ const { generateToken } = require('../middleware/auth');
 
 const router = express.Router();
 
-// ✅ POST /api/auth - LOGIN
-router.post('/', async (req, res) => {
+// ✅ POST /api/auth/login - LOGIN (ROTA CORRIGIDA)
+router.post('/login', async (req, res) => {
   try {
     console.log('🔑 Tentativa de login:', req.body.email);
     
@@ -41,8 +41,8 @@ router.post('/', async (req, res) => {
       });
     }
 
-    // Verificar se está bloqueado
-    if (user.isBlocked()) {
+    // Verificar se está bloqueado (se a função existir)
+    if (user.isBlocked && user.isBlocked()) {
       console.log('❌ Usuário bloqueado:', email);
       return res.status(429).json({
         success: false,
@@ -57,22 +57,25 @@ router.post('/', async (req, res) => {
     if (!isPasswordValid) {
       console.log('❌ Senha incorreta para:', email);
       
-      // Incrementar tentativas de login
-      user.incrementLoginAttempts();
-      await user.save();
+      // Incrementar tentativas de login (se a função existir)
+      if (user.incrementLoginAttempts) {
+        user.incrementLoginAttempts();
+        await user.save();
+      }
       
       return res.status(401).json({
         success: false,
-        message: 'Credenciais inválidas',
-        attemptsRemaining: Math.max(0, 5 - user.tentativasLogin)
+        message: 'Credenciais inválidas'
       });
     }
 
     // ✅ LOGIN SUCESSFUL!
     console.log('✅ Login bem-sucedido:', email);
 
-    // Resetar tentativas de login
-    user.resetLoginAttempts();
+    // Resetar tentativas de login (se a função existir)
+    if (user.resetLoginAttempts) {
+      user.resetLoginAttempts();
+    }
     user.lastLogin = new Date();
     user.ultimoLogin = new Date();
     await user.save();
@@ -106,6 +109,72 @@ router.post('/', async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Erro interno do servidor durante o login'
+    });
+  }
+});
+
+// ✅ POST /api/auth/register - REGISTRO
+router.post('/register', async (req, res) => {
+  try {
+    console.log('📝 Tentativa de registro:', req.body.email);
+    
+    const { name, email, password, role = 'user' } = req.body;
+
+    // Validação básica
+    if (!name || !email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Nome, email e senha são obrigatórios'
+      });
+    }
+
+    // Verificar se usuário já existe
+    const existingUser = await User.findOne({ email: email.toLowerCase() });
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        message: 'Usuário já existe com este email'
+      });
+    }
+
+    // Criar novo usuário
+    const user = new User({
+      name,
+      email: email.toLowerCase(),
+      password,
+      role,
+      isActive: true,
+      isVerified: true
+    });
+
+    await user.save();
+
+    console.log('✅ Usuário criado:', email);
+
+    // Gerar token
+    const token = generateToken(user._id, user.email, user.role);
+
+    // Dados do usuário
+    const userData = {
+      id: user._id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      isActive: user.isActive
+    };
+
+    res.status(201).json({
+      success: true,
+      message: 'Usuário criado com sucesso',
+      token: token,
+      user: userData
+    });
+
+  } catch (error) {
+    console.error('❌ Erro no registro:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erro interno do servidor durante o registro'
     });
   }
 });
@@ -176,8 +245,6 @@ router.get('/verify', async (req, res) => {
 // ✅ POST /api/auth/logout - LOGOUT
 router.post('/logout', (req, res) => {
   try {
-    // Em um sistema JWT stateless, logout é principalmente do lado cliente
-    // Mas podemos logar a ação
     console.log('👋 Logout realizado');
     
     res.json({
