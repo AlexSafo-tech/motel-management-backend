@@ -1,6 +1,7 @@
-// routes/auth.js - CORREÇÃO PARA RESOLVER "Usuário inativo"
+// routes/auth.js - CORRIGIDO COM SINTAXE CORRETA
 const express = require('express');
 const jwt = require('jsonwebtoken');
+const bcryptjs = require('bcryptjs'); // ✅ Importar bcryptjs no topo
 const User = require('../models/User');
 const { generateToken } = require('../middleware/auth');
 
@@ -59,9 +60,7 @@ router.post('/login', async (req, res) => {
       // ✅ FORÇAR ATIVAÇÃO PARA ADMIN
       if (user.role === 'admin') {
         console.log('🔧 Forçando ativação para admin');
-        user.isActive = true;
         user.ativo = true;
-        user.status = 'active';
         await user.save();
       } else {
         return res.status(401).json({
@@ -79,9 +78,8 @@ router.post('/login', async (req, res) => {
       if (typeof user.comparePassword === 'function') {
         isPasswordValid = await user.comparePassword(password);
       } else {
-        // Fallback: comparação direta (temporário para debug)
-        const bcrypt = require('bcrypt');
-        isPasswordValid = await bcrypt.compare(password, user.password || user.senha);
+        // Fallback: comparação direta usando bcryptjs
+        isPasswordValid = await bcryptjs.compare(password, user.password || user.senha);
       }
     } catch (passwordError) {
       console.log('⚠️ Erro na verificação de senha:', passwordError.message);
@@ -101,7 +99,6 @@ router.post('/login', async (req, res) => {
     console.log('✅ Login bem-sucedido:', email);
 
     // Atualizar último login
-    user.lastLogin = new Date();
     user.ultimoLogin = new Date();
     await user.save();
 
@@ -115,8 +112,8 @@ router.post('/login', async (req, res) => {
       email: user.email,
       role: user.role || 'user',
       avatar: user.avatar,
-      permissions: user.permissions || {},
-      lastLogin: user.lastLogin,
+      permissions: user.permissoes || user.permissions || {},
+      lastLogin: user.ultimoLogin,
       isActive: true // Sempre true após login bem-sucedido
     };
 
@@ -143,7 +140,7 @@ router.post('/register', async (req, res) => {
   try {
     console.log('📝 Tentativa de registro:', req.body.email);
     
-    const { name, nomeCompleto, email, password, senha, role = 'user' } = req.body;
+    const { name, nomeCompleto, email, password, senha, role = 'funcionario' } = req.body;
 
     // Validação flexível
     const userName = name || nomeCompleto;
@@ -167,26 +164,12 @@ router.post('/register', async (req, res) => {
 
     // ✅ CRIAR USUÁRIO COM CAMPOS FLEXÍVEIS
     const userData = {
+      nomeCompleto: userName,
       email: email.toLowerCase(),
+      senha: userPassword, // Vai ser hashada pelo pre('save')
       role,
-      isActive: true,
-      ativo: true,
-      status: 'active'
+      ativo: true
     };
-
-    // Adicionar nome (flexível)
-    if (name) userData.name = name;
-    if (nomeCompleto) userData.nomeCompleto = nomeCompleto;
-    if (!userData.name && !userData.nomeCompleto) {
-      userData.name = userName;
-    }
-
-    // Adicionar senha (flexível)  
-    if (password) userData.password = password;
-    if (senha) userData.senha = senha;
-    if (!userData.password && !userData.senha) {
-      userData.password = userPassword;
-    }
 
     const user = new User(userData);
     await user.save();
@@ -199,7 +182,7 @@ router.post('/register', async (req, res) => {
     // Dados do usuário
     const responseUserData = {
       id: user._id,
-      name: user.name || user.nomeCompleto || 'Usuário',
+      name: user.nomeCompleto,
       email: user.email,
       role: user.role,
       isActive: true
@@ -252,7 +235,7 @@ router.get('/verify', async (req, res) => {
         email: user.email,
         role: user.role,
         avatar: user.avatar,
-        permissions: user.permissions,
+        permissions: user.permissoes || user.permissions,
         isActive: true
       }
     });
@@ -329,8 +312,8 @@ router.get('/me', async (req, res) => {
         email: user.email,
         role: user.role,
         avatar: user.avatar,
-        permissions: user.permissions,
-        lastLogin: user.lastLogin,
+        permissions: user.permissoes || user.permissions,
+        lastLogin: user.ultimoLogin,
         isActive: true,
         createdAt: user.createdAt
       }
@@ -338,6 +321,116 @@ router.get('/me', async (req, res) => {
 
   } catch (error) {
     console.error('❌ Erro ao buscar dados do usuário:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erro interno do servidor'
+    });
+  }
+});
+
+// ✅ ENDPOINT TEMPORÁRIO PARA RESETAR SENHA DO ADMIN
+router.post('/reset-admin-password', async (req, res) => {
+  try {
+    console.log('🔧 Resetando senha do admin...');
+    
+    const { newPassword = '123456' } = req.body;
+    
+    // Buscar admin no MongoDB
+    const admin = await User.findOne({ email: 'admin@pmsmotel.com' });
+    
+    if (!admin) {
+      return res.status(404).json({
+        success: false,
+        message: 'Admin não encontrado'
+      });
+    }
+    
+    console.log('👤 Admin encontrado:', {
+      email: admin.email,
+      nomeCompleto: admin.nomeCompleto,
+      role: admin.role,
+      ativo: admin.ativo
+    });
+    
+    // Gerar novo hash da senha
+    const salt = await bcryptjs.genSalt(10);
+    const novoHash = await bcryptjs.hash(newPassword, salt);
+    
+    // Atualizar no MongoDB
+    await User.updateOne(
+      { email: 'admin@pmsmotel.com' },
+      {
+        $set: {
+          senha: novoHash,
+          ativo: true,
+          role: 'admin'
+        }
+      }
+    );
+    
+    console.log('✅ Senha resetada com sucesso!');
+    console.log('🔑 Nova senha:', newPassword);
+    console.log('🔒 Novo hash:', novoHash);
+    
+    // Testar o novo hash
+    const teste = await bcryptjs.compare(newPassword, novoHash);
+    console.log('🧪 Teste de verificação:', teste ? '✅ OK' : '❌ FALHOU');
+    
+    res.json({
+      success: true,
+      message: 'Senha do admin resetada com sucesso!',
+      newPassword: newPassword,
+      hashGerado: novoHash,
+      testeVerificacao: teste
+    });
+    
+  } catch (error) {
+    console.error('❌ Erro ao resetar senha:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erro interno do servidor',
+      error: error.message
+    });
+  }
+});
+
+// ✅ ENDPOINT PARA TESTAR SENHAS CONTRA O HASH ATUAL
+router.post('/test-password', async (req, res) => {
+  try {
+    const { password } = req.body;
+    
+    if (!password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Senha é obrigatória'
+      });
+    }
+    
+    // Buscar admin
+    const admin = await User.findOne({ email: 'admin@pmsmotel.com' });
+    
+    if (!admin) {
+      return res.status(404).json({
+        success: false,
+        message: 'Admin não encontrado'
+      });
+    }
+    
+    // Testar senha
+    const isValid = await bcryptjs.compare(password, admin.senha);
+    
+    console.log(`🧪 Teste senha "${password}":`, isValid ? '✅ CORRETA' : '❌ INCORRETA');
+    
+    res.json({
+      success: true,
+      passwordTested: password,
+      isValid: isValid,
+      currentHash: admin.senha,
+      message: isValid ? 'Senha correta!' : 'Senha incorreta'
+    });
+    
+  } catch (error) {
+    console.error('❌ Erro ao testar senha:', error);
     res.status(500).json({
       success: false,
       message: 'Erro interno do servidor'
