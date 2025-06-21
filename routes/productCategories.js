@@ -13,7 +13,7 @@ router.get('/', auth, async (req, res) => {
     const skip = (page - 1) * limit;
 
     const categories = await ProductCategory.find({ isActive: true })
-      .sort({ name: 1 })
+      .sort({ order: 1, name: 1 })
       .limit(limit)
       .skip(skip);
 
@@ -154,6 +154,50 @@ router.put('/:id', auth, async (req, res) => {
     });
   } catch (error) {
     console.error('Erro ao atualizar categoria:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erro interno do servidor'
+    });
+  }
+});
+
+// @route   PUT /api/productcategories/reorder
+// @desc    Reordenar categorias
+// @access  Private
+router.put('/reorder', auth, async (req, res) => {
+  try {
+    const { orderedIds } = req.body;
+
+    if (!Array.isArray(orderedIds)) {
+      return res.status(400).json({
+        success: false,
+        message: 'orderedIds deve ser um array'
+      });
+    }
+
+    console.log('🔄 [REORDER] Reordenando categorias:', orderedIds);
+
+    // Atualizar ordem de cada categoria
+    const updatePromises = orderedIds.map((id, index) => 
+      ProductCategory.findByIdAndUpdate(
+        id, 
+        { order: index, updatedAt: new Date() },
+        { new: true }
+      )
+    );
+
+    const updatedCategories = await Promise.all(updatePromises);
+
+    console.log('✅ [REORDER] Categorias reordenadas com sucesso');
+
+    res.json({
+      success: true,
+      data: updatedCategories,
+      message: 'Ordem das categorias atualizada com sucesso'
+    });
+
+  } catch (error) {
+    console.error('❌ [REORDER] Erro ao reordenar categorias:', error);
     res.status(500).json({
       success: false,
       message: 'Erro interno do servidor'
