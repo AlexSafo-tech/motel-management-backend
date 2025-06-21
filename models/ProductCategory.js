@@ -1,51 +1,68 @@
 const mongoose = require('mongoose');
 
-// ✅ VERIFICAR SE O MODELO JÁ EXISTE ANTES DE DEFINIR
-let ProductCategory;
+const ProductCategorySchema = new mongoose.Schema({
+  name: {
+    type: String,
+    required: true,
+    unique: true,
+    lowercase: true,
+    trim: true
+  },
+  description: {
+    type: String,
+    default: ''
+  },
+  icon: {
+    type: String,
+    default: '📦'
+  },
+  order: {                    // ✅ CAMPO ADICIONADO PARA REORDENAÇÃO
+    type: Number,
+    default: 0
+  },
+  isActive: {
+    type: Boolean,
+    default: true
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now
+  },
+  updatedAt: {
+    type: Date,
+    default: Date.now
+  }
+});
 
-try {
-  ProductCategory = mongoose.model('ProductCategory');
-} catch (error) {
-  const ProductCategorySchema = new mongoose.Schema({
-    name: {
-      type: String,
-      required: true,
-      unique: true,
-      lowercase: true,
-      trim: true
-    },
-    description: {
-      type: String,
-      default: ''
-    },
-    icon: {
-      type: String,
-      default: '📦'
-    },
-    order: {
-      type: Number,
-      default: 0
-    },
-    isActive: {
-      type: Boolean,
-      default: true
-    },
-    createdAt: {
-      type: Date,
-      default: Date.now
-    },
-    updatedAt: {
-      type: Date,
-      default: Date.now
-    }
-  });
+// ✅ ÍNDICES PARA PERFORMANCE
+ProductCategorySchema.index({ name: 1 });
+ProductCategorySchema.index({ isActive: 1 });
+ProductCategorySchema.index({ order: 1 });              // ✅ ÍNDICE PARA ORDENAÇÃO
+ProductCategorySchema.index({ order: 1, name: 1 });     // ✅ ÍNDICE COMPOSTO
 
-  // Índices para performance
-  ProductCategorySchema.index({ name: 1 });
-  ProductCategorySchema.index({ isActive: 1 });
-  ProductCategorySchema.index({ order: 1 });
+// ✅ MIDDLEWARE PARA ATUALIZAR updatedAt AUTOMATICAMENTE
+ProductCategorySchema.pre('save', function(next) {
+  this.updatedAt = new Date();
+  next();
+});
 
-  ProductCategory = mongoose.model('ProductCategory', ProductCategorySchema, 'productcategories');
-}
+// ✅ MÉTODO ESTÁTICO PARA REORDENAR CATEGORIAS
+ProductCategorySchema.statics.reorderCategories = async function(orderedIds) {
+  const updatePromises = orderedIds.map((id, index) => 
+    this.findByIdAndUpdate(
+      id, 
+      { order: index, updatedAt: new Date() },
+      { new: true }
+    )
+  );
+  
+  return Promise.all(updatePromises);
+};
 
-module.exports = ProductCategory;
+// ✅ MÉTODO ESTÁTICO PARA BUSCAR CATEGORIAS ORDENADAS
+ProductCategorySchema.statics.findAllOrdered = function(filter = {}) {
+  return this.find({ ...filter, isActive: true })
+    .sort({ order: 1, name: 1 });
+};
+
+module.exports = mongoose.model('ProductCategory', ProductCategorySchema, 'productcategories');
