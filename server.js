@@ -67,6 +67,7 @@ app.get('/', (req, res) => {
     '/api/customers',
     '/api/orders',
     '/api/products',
+    '/api/productcategories',  // ✅ NOVO
     '/api/dashboard',
     '/debug/room-types'  // ✅ ADICIONADO
   ];
@@ -199,6 +200,10 @@ try {
   app.use('/api/products', require('./routes/products'));
   console.log('✅ Rota /api/products registrada');
 
+  // ✅ ROTA DE CATEGORIAS DE PRODUTOS
+  app.use('/api/productcategories', require('./routes/productCategories'));
+  console.log('✅ Rota /api/productcategories registrada');
+
   app.use('/api/dashboard', require('./routes/dashboard'));
   console.log('✅ Rota /api/dashboard registrada');
 
@@ -248,6 +253,7 @@ app.use('*', (req, res) => {
     '/api/customers',  
     '/api/orders',
     '/api/products',
+    '/api/productcategories',  // ✅ NOVO
     '/api/dashboard',
     '/debug/room-types'  // ✅ ADICIONADO
   ];
