@@ -303,6 +303,8 @@ const startServer = async () => {
       console.log('    POST /api/periods/calculate-price - Calcular preço');
       console.log('    GET  /api/reservations - Listar reservas');
       console.log('    POST /api/reservations - Criar reserva');
+      console.log('    GET  /api/productcategories - Listar categorias');  // ✅ NOVO
+      console.log('    POST /api/productcategories - Criar categoria');   // ✅ NOVO
       console.log('    GET  /api/dashboard/overview - Estatísticas');
       console.log('🎯 Sistema PMS Motel online!');
     });
