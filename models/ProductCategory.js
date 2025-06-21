@@ -4,10 +4,8 @@ const mongoose = require('mongoose');
 let ProductCategory;
 
 try {
-  // Tentar obter o modelo se já existir
   ProductCategory = mongoose.model('ProductCategory');
 } catch (error) {
-  // Se não existir, definir o schema e modelo
   const ProductCategorySchema = new mongoose.Schema({
     name: {
       type: String,
@@ -23,6 +21,10 @@ try {
     icon: {
       type: String,
       default: '📦'
+    },
+    order: {
+      type: Number,
+      default: 0
     },
     isActive: {
       type: Boolean,
@@ -41,8 +43,8 @@ try {
   // Índices para performance
   ProductCategorySchema.index({ name: 1 });
   ProductCategorySchema.index({ isActive: 1 });
+  ProductCategorySchema.index({ order: 1 });
 
-  // ✅ USAR NOME ESPECÍFICO DA COLLECTION
   ProductCategory = mongoose.model('ProductCategory', ProductCategorySchema, 'productcategories');
 }
 
