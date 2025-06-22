@@ -1,0 +1,662 @@
+// routes/restaurant.js - NOVA ROTA PARA PRODUTOS DO RESTAURANTE
+const express = require('express');
+const router = express.Router();
+const { RestaurantProduct, RestaurantCategory } = require('../models/RestaurantProduct');
+const auth = require('../middleware/auth');
+
+// ================ ROTAS DE CATEGORIAS DO RESTAURANTE ================
+
+// @route   GET /api/restaurant-products/categories
+// @desc    Listar categorias do restaurante
+// @access  Private
+router.get('/categories', auth, async (req, res) => {
+  try {
+    const { isActive } = req.query;
+    
+    const filters = {};
+    if (isActive !== undefined) filters.isActive = isActive === 'true';
+
+    const categories = await RestaurantCategory.find(filters)
+      .sort({ order: 1, name: 1 });
+
+    const categoriesWithCount = await Promise.all(categories.map(async (category) => {
+      const productCount = await RestaurantProduct.countDocuments({ 
+        categoria: category._id,
+        ativo: true
+      });
+      
+      return {
+        ...category.toObject(),
+        productCount
+      };
+    }));
+
+    res.json({
+      success: true,
+      data: categoriesWithCount
+    });
+  } catch (error) {
+    console.error('❌ [RESTAURANT] Erro ao listar categorias:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erro interno do servidor'
+    });
+  }
+});
+
+// @route   POST /api/restaurant-products/categories
+// @desc    Criar nova categoria do restaurante
+// @access  Private
+router.post('/categories', auth, async (req, res) => {
+  try {
+    const { name, description, icon } = req.body;
+
+    if (!name || name.trim().length < 2) {
+      return res.status(400).json({
+        success: false,
+        message: 'Nome da categoria deve ter pelo menos 2 caracteres'
+      });
+    }
+
+    const existingCategory = await RestaurantCategory.findOne({ 
+      name: name.toLowerCase().trim(),
+      isActive: true 
+    });
+    
+    if (existingCategory) {
+      return res.status(400).json({
+        success: false,
+        message: 'Já existe uma categoria com este nome'
+      });
+    }
+
+    // Definir ordem automática
+    const lastCategory = await RestaurantCategory.findOne(
+      { isActive: true }, 
+      {}, 
+      { sort: { order: -1 } }
+    );
+    const nextOrder = lastCategory ? lastCategory.order + 1 : 0;
+
+    const category = new RestaurantCategory({
+      name: name.toLowerCase().trim(),
+      description: description?.trim() || '',
+      icon: icon || '📦',
+      order: nextOrder,
+      isActive: true
+    });
+
+    await category.save();
+
+    res.status(201).json({
+      success: true,
+      message: 'Categoria do restaurante criada com sucesso',
+      data: category
+    });
+  } catch (error) {
+    console.error('❌ [RESTAURANT] Erro ao criar categoria:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erro interno do servidor'
+    });
+  }
+});
+
+// ================ ROTAS DE PRODUTOS DO RESTAURANTE ================
+
+// @route   GET /api/restaurant-products
+// @desc    Listar produtos do restaurante
+// @access  Private
+router.get('/', auth, async (req, res) => {
+  try {
+    const { 
+      page = 1, 
+      limit = 100, 
+      categoria,
+      ativo,
+      search,
+      sortBy = 'nome',
+      sortOrder = 'asc',
+      includeVariations = 'true'
+    } = req.query;
+    
+    console.log('🍽️ [RESTAURANT-PRODUCTS] GET - Parâmetros:', req.query);
+
+    // Construir filtros
+    const filters = {};
+    
+    if (categoria && categoria !== 'todas') {
+      // Aceitar tanto ObjectId quanto nome da categoria
+      if (categoria.match(/^[0-9a-fA-F]{24}$/)) {
+        filters.categoria = categoria;
+      } else {
+        const categoryObj = await RestaurantCategory.findOne({ name: categoria.toLowerCase() });
+        if (categoryObj) {
+          filters.categoria = categoryObj._id;
+        }
+      }
+    }
+    
+    if (ativo !== undefined) {
+      filters.ativo = ativo === 'true';
+    }
+    
+    if (search) {
+      filters.$or = [
+        { nome: { $regex: search, $options: 'i' } },
+        { descricao: { $regex: search, $options: 'i' } },
+        { 'variacoes.nome': { $regex: search, $options: 'i' } }
+      ];
+    }
+
+    // Ordenação
+    const sort = {};
+    sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
+
+    let query = RestaurantProduct.find(filters)
+      .populate('categoria', 'name icon description')
+      .sort(sort)
+      .limit(parseInt(limit))
+      .skip((parseInt(page) - 1) * parseInt(limit));
+
+    const products = await query;
+    const total = await RestaurantProduct.countDocuments(filters);
+
+    console.log(`🍽️ [RESTAURANT-PRODUCTS] Encontrados: ${products.length} de ${total} produtos`);
+
+    // Processar produtos com variações se solicitado
+    const productsWithDetails = products.map(product => {
+      const baseProduct = {
+        ...product.toObject(),
+        isLowStock: product.isLowStock,
+        isOutOfStock: product.isOutOfStock,
+        stockValue: product.getStockValue()
+      };
+
+      if (includeVariations === 'true') {
+        baseProduct.variacoes_com_estoque = product.getVariacoesComEstoque();
+      }
+
+      return baseProduct;
+    });
+
+    res.json({
+      success: true,
+      data: productsWithDetails,
+      pagination: {
+        current: parseInt(page),
+        pages: Math.ceil(total / parseInt(limit)),
+        total,
+        limit: parseInt(limit)
+      }
+    });
+  } catch (error) {
+    console.error('❌ [RESTAURANT-PRODUCTS] Erro ao listar:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erro interno do servidor'
+    });
+  }
+});
+
+// @route   GET /api/restaurant-products/vendaveis
+// @desc    Listar produtos vendáveis com estoque > 0
+// @access  Private
+router.get('/vendaveis', auth, async (req, res) => {
+  try {
+    const { categoria } = req.query;
+
+    const filters = { ativo: true };
+
+    if (categoria && categoria !== 'todas') {
+      if (categoria.match(/^[0-9a-fA-F]{24}$/)) {
+        filters.categoria = categoria;
+      } else {
+        const categoryObj = await RestaurantCategory.findOne({ name: categoria.toLowerCase() });
+        if (categoryObj) {
+          filters.categoria = categoryObj._id;
+        }
+      }
+    }
+
+    const products = await RestaurantProduct.find(filters)
+      .populate('categoria', 'name icon')
+      .sort({ nome: 1 });
+
+    // Processar produtos vendáveis
+    const produtosVendaveis = [];
+
+    products.forEach(product => {
+      const variacoesComEstoque = product.getVariacoesComEstoque();
+      const variacoesDisponiveis = variacoesComEstoque.filter(v => v.estoque_disponivel > 0 && v.ativo);
+      
+      if (variacoesDisponiveis.length > 0) {
+        produtosVendaveis.push({
+          _id: product._id,
+          nome: product.nome,
+          descricao: product.descricao,
+          categoria: product.categoria,
+          tipo: product.tipo,
+          variacoes: variacoesDisponiveis,
+          estoque_base: product.estoque_base,
+          ativo: product.ativo
+        });
+      }
+    });
+
+    // Agrupar por categoria
+    const produtosPorCategoria = {};
+    produtosVendaveis.forEach(produto => {
+      const categoryName = produto.categoria?.name || 'outros';
+      if (!produtosPorCategoria[categoryName]) {
+        produtosPorCategoria[categoryName] = {
+          category: produto.categoria,
+          products: []
+        };
+      }
+      produtosPorCategoria[categoryName].products.push(produto);
+    });
+
+    res.json({
+      success: true,
+      data: {
+        categories: Object.values(produtosPorCategoria),
+        totalProducts: produtosVendaveis.length
+      }
+    });
+  } catch (error) {
+    console.error('❌ [RESTAURANT-PRODUCTS] Erro ao listar vendáveis:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erro interno do servidor'
+    });
+  }
+});
+
+// @route   GET /api/restaurant-products/:id
+// @desc    Obter produto específico do restaurante
+// @access  Private
+router.get('/:id', auth, async (req, res) => {
+  try {
+    const product = await RestaurantProduct.findById(req.params.id)
+      .populate('categoria', 'name icon description');
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: 'Produto do restaurante não encontrado'
+      });
+    }
+
+    const productData = {
+      ...product.toObject(),
+      isLowStock: product.isLowStock,
+      isOutOfStock: product.isOutOfStock,
+      stockValue: product.getStockValue(),
+      variacoes_com_estoque: product.getVariacoesComEstoque()
+    };
+
+    res.json({
+      success: true,
+      data: productData
+    });
+  } catch (error) {
+    console.error('❌ [RESTAURANT-PRODUCTS] Erro ao buscar produto:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erro interno do servidor'
+    });
+  }
+});
+
+// @route   POST /api/restaurant-products
+// @desc    Criar novo produto do restaurante
+// @access  Private
+router.post('/', auth, async (req, res) => {
+  try {
+    console.log('🍽️ [RESTAURANT-PRODUCTS] POST - Criando produto:', req.body);
+
+    // Validações básicas
+    if (!req.body.nome || !req.body.nome.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Nome do produto é obrigatório'
+      });
+    }
+
+    if (!req.body.variacoes || req.body.variacoes.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Pelo menos uma variação é obrigatória'
+      });
+    }
+
+    // Buscar ou criar categoria
+    let categoriaId = req.body.categoria;
+    
+    if (!categoriaId || typeof categoriaId === 'string') {
+      // Se categoria for string, buscar ou criar
+      const categoryName = categoriaId || 'outros';
+      let category = await RestaurantCategory.findOne({ name: categoryName.toLowerCase() });
+      
+      if (!category) {
+        // Criar categoria automaticamente
+        const lastCategory = await RestaurantCategory.findOne({}, {}, { sort: { order: -1 } });
+        const nextOrder = lastCategory ? lastCategory.order + 1 : 0;
+        
+        category = new RestaurantCategory({
+          name: categoryName.toLowerCase(),
+          description: `Categoria ${categoryName}`,
+          icon: '📦',
+          order: nextOrder,
+          isActive: true
+        });
+        await category.save();
+        console.log('✅ [RESTAURANT-PRODUCTS] Categoria criada automaticamente:', categoryName);
+      }
+      
+      categoriaId = category._id;
+    }
+
+    // Criar produto
+    const product = new RestaurantProduct({
+      ...req.body,
+      categoria: categoriaId,
+      nome: req.body.nome.trim(),
+      descricao: req.body.descricao?.trim() || '',
+      tipo: req.body.tipo || 'produto_simples',
+      ativo: req.body.ativo !== false,
+      apenas_admin: req.body.apenas_admin || false,
+      tipo_sistema: 'restaurante'
+    });
+
+    // Gerar IDs para variações se não existirem
+    if (product.variacoes && product.variacoes.length > 0) {
+      product.variacoes.forEach(variacao => {
+        if (!variacao.id) {
+          variacao.id = `var_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        }
+      });
+    }
+
+    await product.save();
+    await product.populate('categoria', 'name icon');
+
+    console.log('✅ [RESTAURANT-PRODUCTS] Produto criado:', product._id);
+
+    res.status(201).json({
+      success: true,
+      message: 'Produto do restaurante criado com sucesso',
+      data: {
+        ...product.toObject(),
+        variacoes_com_estoque: product.getVariacoesComEstoque()
+      }
+    });
+  } catch (error) {
+    console.error('❌ [RESTAURANT-PRODUCTS] Erro ao criar:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erro interno do servidor',
+      error: error.message
+    });
+  }
+});
+
+// @route   PUT /api/restaurant-products/:id
+// @desc    Atualizar produto do restaurante
+// @access  Private
+router.put('/:id', auth, async (req, res) => {
+  try {
+    console.log('🍽️ [RESTAURANT-PRODUCTS] PUT - Atualizando:', req.params.id);
+
+    const product = await RestaurantProduct.findById(req.params.id);
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: 'Produto do restaurante não encontrado'
+      });
+    }
+
+    // Atualizar categoria se necessário
+    if (req.body.categoria && typeof req.body.categoria === 'string') {
+      let category = await RestaurantCategory.findOne({ name: req.body.categoria.toLowerCase() });
+      
+      if (!category) {
+        // Criar categoria automaticamente
+        const lastCategory = await RestaurantCategory.findOne({}, {}, { sort: { order: -1 } });
+        const nextOrder = lastCategory ? lastCategory.order + 1 : 0;
+        
+        category = new RestaurantCategory({
+          name: req.body.categoria.toLowerCase(),
+          description: `Categoria ${req.body.categoria}`,
+          icon: '📦',
+          order: nextOrder,
+          isActive: true
+        });
+        await category.save();
+      }
+      
+      req.body.categoria = category._id;
+    }
+
+    // Atualizar campos
+    Object.keys(req.body).forEach(key => {
+      if (req.body[key] !== undefined && key !== '_id') {
+        product[key] = req.body[key];
+      }
+    });
+
+    // Gerar IDs para novas variações
+    if (product.variacoes && product.variacoes.length > 0) {
+      product.variacoes.forEach(variacao => {
+        if (!variacao.id) {
+          variacao.id = `var_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        }
+      });
+    }
+
+    await product.save();
+    await product.populate('categoria', 'name icon');
+
+    console.log('✅ [RESTAURANT-PRODUCTS] Produto atualizado:', product._id);
+
+    res.json({
+      success: true,
+      message: 'Produto do restaurante atualizado com sucesso',
+      data: {
+        ...product.toObject(),
+        variacoes_com_estoque: product.getVariacoesComEstoque()
+      }
+    });
+  } catch (error) {
+    console.error('❌ [RESTAURANT-PRODUCTS] Erro ao atualizar:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erro interno do servidor'
+    });
+  }
+});
+
+// @route   DELETE /api/restaurant-products/:id
+// @desc    Deletar produto do restaurante
+// @access  Private
+router.delete('/:id', auth, async (req, res) => {
+  try {
+    console.log('🍽️ [RESTAURANT-PRODUCTS] DELETE - Removendo:', req.params.id);
+
+    const product = await RestaurantProduct.findById(req.params.id);
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: 'Produto do restaurante não encontrado'
+      });
+    }
+
+    await RestaurantProduct.findByIdAndDelete(req.params.id);
+
+    console.log('✅ [RESTAURANT-PRODUCTS] Produto removido:', req.params.id);
+
+    res.json({
+      success: true,
+      message: 'Produto do restaurante deletado com sucesso'
+    });
+  } catch (error) {
+    console.error('❌ [RESTAURANT-PRODUCTS] Erro ao deletar:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erro interno do servidor'
+    });
+  }
+});
+
+// ================ ROTAS DE VARIAÇÕES ================
+
+// @route   POST /api/restaurant-products/:id/variacoes
+// @desc    Adicionar variação a produto do restaurante
+// @access  Private
+router.post('/:id/variacoes', auth, async (req, res) => {
+  try {
+    const product = await RestaurantProduct.findById(req.params.id);
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: 'Produto do restaurante não encontrado'
+      });
+    }
+
+    const { nome, quantidade, unidade, preco } = req.body;
+
+    if (!nome || !quantidade || !unidade || !preco) {
+      return res.status(400).json({
+        success: false,
+        message: 'Nome, quantidade, unidade e preço são obrigatórios'
+      });
+    }
+
+    const variacaoExistente = product.variacoes.find(v => v.nome.toLowerCase() === nome.toLowerCase());
+    if (variacaoExistente) {
+      return res.status(400).json({
+        success: false,
+        message: 'Já existe uma variação com este nome'
+      });
+    }
+
+    await product.adicionarVariacao({
+      nome: nome.trim(),
+      quantidade: Number(quantidade),
+      unidade: unidade.trim(),
+      preco: Number(preco)
+    });
+
+    if (product.tipo === 'produto_simples') {
+      product.tipo = 'produto_variavel';
+      await product.save();
+    }
+
+    res.status(201).json({
+      success: true,
+      message: 'Variação adicionada com sucesso',
+      data: {
+        ...product.toObject(),
+        variacoes_com_estoque: product.getVariacoesComEstoque()
+      }
+    });
+  } catch (error) {
+    console.error('❌ [RESTAURANT-PRODUCTS] Erro ao adicionar variação:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erro interno do servidor'
+    });
+  }
+});
+
+// @route   PUT /api/restaurant-products/:id/variacoes/:variacaoId
+// @desc    Atualizar variação de produto do restaurante
+// @access  Private
+router.put('/:id/variacoes/:variacaoId', auth, async (req, res) => {
+  try {
+    const product = await RestaurantProduct.findById(req.params.id);
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: 'Produto do restaurante não encontrado'
+      });
+    }
+
+    const { variacaoId } = req.params;
+    const variacaoExistente = product.variacoes.find(v => v.id === variacaoId);
+
+    if (!variacaoExistente) {
+      return res.status(404).json({
+        success: false,
+        message: 'Variação não encontrada'
+      });
+    }
+
+    await product.atualizarVariacao(variacaoId, req.body);
+
+    res.json({
+      success: true,
+      message: 'Variação atualizada com sucesso',
+      data: {
+        ...product.toObject(),
+        variacoes_com_estoque: product.getVariacoesComEstoque()
+      }
+    });
+  } catch (error) {
+    console.error('❌ [RESTAURANT-PRODUCTS] Erro ao atualizar variação:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erro interno do servidor'
+    });
+  }
+});
+
+// @route   DELETE /api/restaurant-products/:id/variacoes/:variacaoId
+// @desc    Remover variação de produto do restaurante
+// @access  Private
+router.delete('/:id/variacoes/:variacaoId', auth, async (req, res) => {
+  try {
+    const product = await RestaurantProduct.findById(req.params.id);
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: 'Produto do restaurante não encontrado'
+      });
+    }
+
+    const { variacaoId } = req.params;
+    const variacaoExistente = product.variacoes.find(v => v.id === variacaoId);
+
+    if (!variacaoExistente) {
+      return res.status(404).json({
+        success: false,
+        message: 'Variação não encontrada'
+      });
+    }
+
+    await product.removerVariacao(variacaoId);
+
+    res.json({
+      success: true,
+      message: 'Variação removida com sucesso',
+      data: {
+        ...product.toObject(),
+        variacoes_com_estoque: product.getVariacoesComEstoque()
+      }
+    });
+  } catch (error) {
+    console.error('❌ [RESTAURANT-PRODUCTS] Erro ao remover variação:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erro interno do servidor'
+    });
+  }
+});
+
+module.exports = router;
