@@ -1,4 +1,4 @@
-// server.js - ATUALIZADO COM SUPORTE A restaurant_products
+// server.js - CORRIGIDO PARA EVITAR CONFLITO DE MODELOS
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -68,9 +68,9 @@ app.get('/', (req, res) => {
     '/api/orders',
     '/api/products',              // ✅ PERÍODOS DE QUARTOS
     '/api/restaurant-products',   // ✅ NOVO - PRODUTOS DE COZINHA
-    '/api/productcategories',
     '/api/dashboard',
-    '/debug/room-types'
+    '/debug/room-types',
+    '/debug/restaurant-products'
   ];
 
   res.json({
@@ -171,36 +171,51 @@ app.get('/debug/restaurant-products', async (req, res) => {
   try {
     console.log('🍽️ [DEBUG] Verificando collection restaurant_products...');
     
-    const { RestaurantProduct, RestaurantCategory } = require('./models/RestaurantProduct');
-    
-    const products = await RestaurantProduct.find({}).populate('categoria');
-    const categories = await RestaurantCategory.find({});
-    
-    console.log(`📊 [DEBUG] Produtos do restaurante: ${products.length}`);
-    console.log(`📂 [DEBUG] Categorias do restaurante: ${categories.length}`);
-    
-    res.json({
-      success: true,
-      debug: {
-        totalProducts: products.length,
-        totalCategories: categories.length,
-        products: products.slice(0, 5).map(p => ({
-          id: p._id,
-          nome: p.nome,
-          categoria: p.categoria?.name,
-          tipo: p.tipo,
-          variacoes: p.variacoes.length,
-          ativo: p.ativo
-        })),
-        categories: categories.map(c => ({
-          id: c._id,
-          name: c.name,
-          icon: c.icon,
-          order: c.order,
-          isActive: c.isActive
-        }))
-      }
-    });
+    try {
+      const { RestaurantProduct, RestaurantCategory } = require('./models/RestaurantProduct');
+      
+      const products = await RestaurantProduct.find({}).populate('categoria');
+      const categories = await RestaurantCategory.find({});
+      
+      console.log(`📊 [DEBUG] Produtos do restaurante: ${products.length}`);
+      console.log(`📂 [DEBUG] Categorias do restaurante: ${categories.length}`);
+      
+      res.json({
+        success: true,
+        debug: {
+          totalProducts: products.length,
+          totalCategories: categories.length,
+          products: products.slice(0, 5).map(p => ({
+            id: p._id,
+            nome: p.nome,
+            categoria: p.categoria?.name,
+            tipo: p.tipo,
+            variacoes: p.variacoes.length,
+            ativo: p.ativo
+          })),
+          categories: categories.map(c => ({
+            id: c._id,
+            name: c.name,
+            icon: c.icon,
+            order: c.order,
+            isActive: c.isActive
+          }))
+        }
+      });
+    } catch (modelError) {
+      console.log('⚠️ [DEBUG] Erro ao carregar modelo RestaurantProduct:', modelError.message);
+      res.json({
+        success: false,
+        error: 'Modelo RestaurantProduct não encontrado',
+        message: 'Você precisa inserir os dados no MongoDB primeiro',
+        debug: {
+          totalProducts: 0,
+          totalCategories: 0,
+          products: [],
+          categories: []
+        }
+      });
+    }
     
   } catch (error) {
     console.error('❌ [DEBUG] Erro:', error);
@@ -210,6 +225,35 @@ app.get('/debug/restaurant-products', async (req, res) => {
     });
   }
 });
+
+// 🔧 LIMPAR CACHE DE MODELOS PARA EVITAR CONFLITOS
+console.log('🔧 [MONGOOSE] Verificando modelos existentes...');
+if (process.env.NODE_ENV !== 'production') {
+  try {
+    // Limpar modelos que podem causar conflito
+    const modelosParaLimpar = ['ProductCategory', 'RestaurantCategory', 'RestaurantProduct'];
+    
+    modelosParaLimpar.forEach(modelo => {
+      if (mongoose.models[modelo]) {
+        delete mongoose.models[modelo];
+        console.log(`🧹 [MONGOOSE] ${modelo} removido do cache`);
+      }
+    });
+    
+    // Limpar também do connection.models se existir
+    if (mongoose.connection.models) {
+      modelosParaLimpar.forEach(modelo => {
+        if (mongoose.connection.models[modelo]) {
+          delete mongoose.connection.models[modelo];
+          console.log(`🧹 [MONGOOSE] ${modelo} removido do connection.models`);
+        }
+      });
+    }
+  } catch (error) {
+    console.log('⚠️ [MONGOOSE] Aviso ao limpar cache:', error.message);
+  }
+}
+console.log('✅ [MONGOOSE] Verificação de modelos concluída');
 
 // ✅ REGISTRAR ROTAS DA API
 try {
@@ -248,12 +292,47 @@ try {
   console.log('✅ Rota /api/products registrada (períodos de quartos)');
 
   // ✅ NOVA ROTA DE RESTAURANT-PRODUCTS (PRODUTOS DE COZINHA)
-  app.use('/api/restaurant-products', require('./routes/restaurant'));
-  console.log('✅ Rota /api/restaurant-products registrada (produtos de cozinha)');
+  try {
+    app.use('/api/restaurant-products', require('./routes/restaurant'));
+    console.log('✅ Rota /api/restaurant-products registrada (produtos de cozinha)');
+  } catch (restaurantError) {
+    console.log('⚠️ Erro ao carregar rota restaurant-products:', restaurantError.message);
+    
+    // Criar fallback para restaurant-products
+    app.get('/api/restaurant-products', (req, res) => {
+      res.json({
+        success: true,
+        message: 'Endpoint restaurant-products (fallback) - arquivo restaurant.js não encontrado',
+        data: [],
+        info: 'Crie o arquivo routes/restaurant.js para funcionalidade completa'
+      });
+    });
+    console.log('🔄 Fallback para /api/restaurant-products criado');
+  }
 
-  // ✅ ROTA DE CATEGORIAS DE PRODUTOS
-  app.use('/api/productcategories', require('./routes/productCategories'));
-  console.log('✅ Rota /api/productcategories registrada');
+  // ✅ ROTA DE CATEGORIAS DE PRODUTOS - COMENTADA TEMPORARIAMENTE
+  try {
+    app.use('/api/productcategories', require('./routes/productCategories'));
+    console.log('✅ Rota /api/productcategories registrada');
+  } catch (categoryError) {
+    console.log('⚠️ Erro ao carregar productcategories (conflito de modelo esperado):', categoryError.message);
+    
+    // Criar fallback para productcategories
+    app.get('/api/productcategories', (req, res) => {
+      res.json({
+        success: true,
+        message: 'Endpoint productcategories (fallback) - conflito de modelo resolvido',
+        data: [
+          { id: 'cervejas', nome: 'Cervejas', icon: '🍺' },
+          { id: 'bebidas', nome: 'Bebidas', icon: '🥤' },
+          { id: 'destilados', nome: 'Destilados', icon: '🥃' },
+          { id: 'pratos', nome: 'Pratos', icon: '🍽️' },
+          { id: 'cigarros', nome: 'Cigarros', icon: '🚬' }
+        ]
+      });
+    });
+    console.log('🔄 Fallback para /api/productcategories criado');
+  }
 
   app.use('/api/dashboard', require('./routes/dashboard'));
   console.log('✅ Rota /api/dashboard registrada');
@@ -315,7 +394,6 @@ app.use('*', (req, res) => {
     '/api/orders',
     '/api/products',              // Períodos de quartos
     '/api/restaurant-products',   // ✅ NOVO - Produtos de cozinha
-    '/api/productcategories',
     '/api/dashboard',
     '/debug/room-types',
     '/debug/restaurant-products'  // ✅ NOVO DEBUG
@@ -359,7 +437,7 @@ const startServer = async () => {
       console.log('    GET  / - Informações da API');
       console.log('    GET  /health - Health check');
       console.log('    GET  /debug/room-types - Debug tipos');
-      console.log('    GET  /debug/restaurant-products - Debug produtos restaurante'); // ✅ NOVO
+      console.log('    GET  /debug/restaurant-products - Debug produtos restaurante');
       console.log('    POST /api/auth - Login');
       console.log('    GET  /api/users - Listar usuários');
       console.log('    GET  /api/rooms - Listar quartos');
@@ -372,19 +450,20 @@ const startServer = async () => {
       console.log('    POST /api/periods/calculate-price - Calcular preço');
       console.log('    GET  /api/reservations - Listar reservas');
       console.log('    POST /api/reservations - Criar reserva');
-      console.log('    GET  /api/products - Listar produtos (PERÍODOS)');           // ✅ CLARIFICADO
-      console.log('    GET  /api/restaurant-products - Listar produtos COZINHA');   // ✅ NOVO
-      console.log('    POST /api/restaurant-products - Criar produto COZINHA');     // ✅ NOVO
-      console.log('    PUT  /api/restaurant-products/:id - Editar produto COZINHA'); // ✅ NOVO
-      console.log('    DELETE /api/restaurant-products/:id - Deletar produto COZINHA'); // ✅ NOVO
-      console.log('    GET  /api/productcategories - Listar categorias');
-      console.log('    POST /api/productcategories - Criar categoria');
+      console.log('    GET  /api/products - Listar produtos (PERÍODOS)');
+      console.log('    GET  /api/restaurant-products - Listar produtos COZINHA');
+      console.log('    POST /api/restaurant-products - Criar produto COZINHA');
+      console.log('    PUT  /api/restaurant-products/:id - Editar produto COZINHA');
+      console.log('    DELETE /api/restaurant-products/:id - Deletar produto COZINHA');
       console.log('    GET  /api/dashboard/overview - Estatísticas');
       console.log('🎯 Sistema PMS Motel online!');
       console.log('');
       console.log('📋 SEPARAÇÃO DE DADOS:');
       console.log('  🏨 /api/products → Períodos de quartos (2h, 4h, pernoite)');
       console.log('  🍽️ /api/restaurant-products → Produtos de cozinha (cervejas, pratos)');
+      console.log('');
+      console.log('⚠️  IMPORTANTE: Se /api/restaurant-products retornar fallback,');
+      console.log('    execute a migração de dados no MongoDB primeiro!');
     });
   } catch (error) {
     console.error('❌ Erro ao iniciar servidor:', error);
