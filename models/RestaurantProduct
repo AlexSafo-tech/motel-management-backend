@@ -1,0 +1,565 @@
+// models/RestaurantProduct.js - MODELO PARA PRODUTOS DO RESTAURANTE
+const mongoose = require('mongoose');
+
+// ✅ SCHEMA PARA CATEGORIAS DO RESTAURANTE
+const restaurantCategorySchema = new mongoose.Schema({
+  name: {
+    type: String,
+    required: [true, 'Nome da categoria é obrigatório'],
+    unique: true,
+    trim: true,
+    lowercase: true
+  },
+  description: {
+    type: String,
+    trim: true,
+    default: ''
+  },
+  icon: {
+    type: String,
+    trim: true,
+    default: '📦'
+  },
+  order: {
+    type: Number,
+    default: 0
+  },
+  isActive: {
+    type: Boolean,
+    default: true
+  }
+}, {
+  timestamps: true,
+  collection: 'restaurant_categories'
+});
+
+// ✅ SCHEMA PARA VARIAÇÕES DE PRODUTOS DO RESTAURANTE
+const restaurantVariationSchema = new mongoose.Schema({
+  id: {
+    type: String,
+    required: true
+  },
+  nome: {
+    type: String,
+    required: [true, 'Nome da variação é obrigatório'],
+    trim: true
+  },
+  quantidade: {
+    type: Number,
+    required: [true, 'Quantidade da variação é obrigatória'],
+    min: 0,
+    default: 1
+  },
+  unidade: {
+    type: String,
+    required: [true, 'Unidade da variação é obrigatória'],
+    enum: ['unidade', 'ml', 'g', 'kg', 'litro', 'copo', 'dose', 'jarra', 'porção', 'fatia', 'pedaço'],
+    default: 'unidade'
+  },
+  preco: {
+    type: Number,
+    required: [true, 'Preço da variação é obrigatório'],
+    min: 0
+  },
+  ativo: {
+    type: Boolean,
+    default: true
+  },
+  estoque: {
+    quantidade: {
+      type: Number,
+      min: 0,
+      default: 0
+    },
+    minimo: {
+      type: Number,
+      min: 0,
+      default: 5
+    },
+    maximo: {
+      type: Number,
+      min: 0,
+      default: 100
+    }
+  },
+  descricao: {
+    type: String,
+    trim: true,
+    default: ''
+  }
+}, { _id: false });
+
+// ✅ SCHEMA PARA COMPONENTES (PRODUTOS COMPOSTOS)
+const restaurantComponentSchema = new mongoose.Schema({
+  id: {
+    type: String,
+    required: true
+  },
+  produtoId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'RestaurantProduct',
+    required: true
+  },
+  produtoNome: {
+    type: String,
+    required: true,
+    trim: true
+  },
+  variacaoId: {
+    type: String,
+    required: true
+  },
+  variacaoNome: {
+    type: String,
+    required: true,
+    trim: true
+  },
+  quantidade: {
+    type: Number,
+    required: true,
+    min: 0.1
+  },
+  unidade: {
+    type: String,
+    required: true,
+    default: 'unidade'
+  }
+}, { _id: false });
+
+// ✅ SCHEMA PRINCIPAL PARA PRODUTOS DO RESTAURANTE
+const restaurantProductSchema = new mongoose.Schema({
+  nome: {
+    type: String,
+    required: [true, 'Nome do produto é obrigatório'],
+    trim: true
+  },
+  name: { // Compatibilidade
+    type: String,
+    trim: true
+  },
+  descricao: {
+    type: String,
+    trim: true,
+    default: ''
+  },
+  description: { // Compatibilidade
+    type: String,
+    trim: true
+  },
+  categoria: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'RestaurantCategory',
+    required: [true, 'Categoria é obrigatória']
+  },
+
+  // ✅ TIPO DE PRODUTO
+  tipo: {
+    type: String,
+    enum: ['produto_simples', 'produto_variavel', 'produto_composto'],
+    default: 'produto_simples'
+  },
+
+  // ✅ CONTROLE
+  ativo: {
+    type: Boolean,
+    default: true
+  },
+  apenas_admin: {
+    type: Boolean,
+    default: false
+  },
+  tipo_sistema: {
+    type: String,
+    default: 'restaurante'
+  },
+
+  // ✅ VARIAÇÕES
+  variacoes: [restaurantVariationSchema],
+
+  // ✅ COMPONENTES PARA PRODUTOS COMPOSTOS
+  componentes: [restaurantComponentSchema],
+
+  // ✅ RECEITA (OPCIONAL)
+  receita: [{
+    etapa: {
+      type: Number,
+      required: true
+    },
+    descricao: {
+      type: String,
+      required: true,
+      trim: true
+    },
+    tempo: {
+      type: Number, // em minutos
+      min: 0
+    },
+    ingredientes: [String],
+    observacoes: String
+  }],
+
+  // ✅ ESTOQUE BASE (PARA PRODUTOS VARIÁVEIS)
+  estoque_base: {
+    quantidade: { 
+      type: Number, 
+      min: 0, 
+      default: 0 
+    },
+    unidade: { 
+      type: String, 
+      enum: ['unidade', 'kg', 'g', 'litro', 'ml', 'metro', 'cm', 'garrafa', 'saco', 'caixa'],
+      default: 'unidade'
+    },
+    volume_por_unidade: { 
+      type: Number, 
+      min: 0,
+      default: 1
+    },
+    volume_total: { 
+      type: Number, 
+      min: 0,
+      default: 0
+    }
+  },
+
+  // ✅ CAMPOS DE COMPATIBILIDADE
+  preco: {
+    type: Number,
+    min: 0,
+    default: 0
+  },
+  estoque: {
+    type: Number,
+    min: 0,
+    default: 0
+  },
+
+  // ✅ CAMPOS ADICIONAIS ESPECÍFICOS DO RESTAURANTE
+  tags: [{ 
+    type: String, 
+    trim: true 
+  }],
+  alergenos: [{
+    type: String,
+    enum: ['gluten', 'lactose', 'nozes', 'soja', 'ovos', 'peixe', 'frutos_do_mar', 'amendoim'],
+    lowercase: true
+  }],
+  informacoes_nutricionais: {
+    calorias: { type: Number, min: 0 },
+    proteinas: { type: Number, min: 0 },
+    carboidratos: { type: Number, min: 0 },
+    gorduras: { type: Number, min: 0 },
+    fibras: { type: Number, min: 0 },
+    sodio: { type: Number, min: 0 }
+  },
+  tempo_preparo: {
+    type: Number, // em minutos
+    min: 0
+  },
+  disponibilidade: {
+    horarios: {
+      inicio: { type: String }, // "08:00"
+      fim: { type: String }     // "22:00"
+    },
+    dias_semana: [{
+      type: String,
+      enum: ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado']
+    }],
+    disponivel_delivery: {
+      type: Boolean,
+      default: true
+    }
+  },
+  vendas: {
+    total_vendido: {
+      type: Number,
+      default: 0
+    },
+    ultima_venda: {
+      type: Date
+    },
+    vendas_mes: {
+      type: Number,
+      default: 0
+    }
+  }
+}, {
+  timestamps: true,
+  collection: 'restaurant_products'
+});
+
+// ✅ MIDDLEWARE PARA SINCRONIZAÇÃO DE CAMPOS
+restaurantProductSchema.pre('save', function(next) {
+  // Sincronizar campos de compatibilidade
+  if (this.nome && !this.name) this.name = this.nome;
+  if (this.name && !this.nome) this.nome = this.name;
+  if (this.descricao && !this.description) this.description = this.descricao;
+  if (this.description && !this.descricao) this.descricao = this.description;
+
+  // Calcular volume total para produtos variáveis
+  if (this.tipo === 'produto_variavel' && this.estoque_base.quantidade && this.estoque_base.volume_por_unidade) {
+    this.estoque_base.volume_total = this.estoque_base.quantidade * this.estoque_base.volume_por_unidade;
+  }
+
+  // Para produtos simples, sincronizar com primeira variação
+  if (this.tipo === 'produto_simples' && this.variacoes.length > 0) {
+    const primeiraVariacao = this.variacoes[0];
+    this.preco = primeiraVariacao.preco;
+    this.estoque = primeiraVariacao.estoque?.quantidade || 0;
+  }
+
+  next();
+});
+
+// ✅ MIDDLEWARE PARA GERAR IDs AUTOMÁTICOS
+restaurantProductSchema.pre('save', function(next) {
+  // Gerar IDs para variações sem ID
+  this.variacoes.forEach(variacao => {
+    if (!variacao.id) {
+      variacao.id = `var_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    }
+  });
+
+  // Gerar IDs para componentes sem ID
+  this.componentes.forEach(componente => {
+    if (!componente.id) {
+      componente.id = `comp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    }
+  });
+
+  next();
+});
+
+// ✅ ÍNDICES
+restaurantProductSchema.index({ nome: 'text', descricao: 'text' });
+restaurantProductSchema.index({ categoria: 1 });
+restaurantProductSchema.index({ ativo: 1 });
+restaurantProductSchema.index({ tipo: 1 });
+restaurantProductSchema.index({ tipo_sistema: 1 });
+restaurantProductSchema.index({ tags: 1 });
+restaurantProductSchema.index({ 'variacoes.nome': 1 });
+
+// ✅ VIRTUALS
+restaurantProductSchema.virtual('isLowStock').get(function() {
+  if (this.tipo === 'produto_simples' && this.variacoes.length > 0) {
+    return this.variacoes.some(v => (v.estoque?.quantidade || 0) <= (v.estoque?.minimo || 5));
+  }
+  if (this.tipo === 'produto_variavel') {
+    return this.estoque_base.quantidade <= 5;
+  }
+  return this.estoque <= 5;
+});
+
+restaurantProductSchema.virtual('isOutOfStock').get(function() {
+  if (this.tipo === 'produto_simples' && this.variacoes.length > 0) {
+    return this.variacoes.every(v => (v.estoque?.quantidade || 0) === 0);
+  }
+  if (this.tipo === 'produto_variavel') {
+    return this.estoque_base.quantidade === 0;
+  }
+  return this.estoque === 0;
+});
+
+// ✅ MÉTODOS PARA VARIAÇÕES
+
+// Adicionar nova variação
+restaurantProductSchema.methods.adicionarVariacao = function(variacao) {
+  if (!variacao.id) {
+    variacao.id = `var_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  }
+  this.variacoes.push(variacao);
+  
+  // Converter para produto variável se necessário
+  if (this.tipo === 'produto_simples') {
+    this.tipo = 'produto_variavel';
+  }
+  
+  return this.save();
+};
+
+// Remover variação
+restaurantProductSchema.methods.removerVariacao = function(variacaoId) {
+  this.variacoes = this.variacoes.filter(v => v.id !== variacaoId);
+  
+  // Converter para produto simples se ficar sem variações
+  if (this.variacoes.length === 0) {
+    this.tipo = 'produto_simples';
+  }
+  
+  return this.save();
+};
+
+// Atualizar variação
+restaurantProductSchema.methods.atualizarVariacao = function(variacaoId, dadosAtualizados) {
+  const variacao = this.variacoes.find(v => v.id === variacaoId);
+  if (variacao) {
+    Object.keys(dadosAtualizados).forEach(key => {
+      if (dadosAtualizados[key] !== undefined) {
+        if (key === 'estoque' && typeof dadosAtualizados[key] === 'object') {
+          variacao.estoque = { ...variacao.estoque, ...dadosAtualizados[key] };
+        } else {
+          variacao[key] = dadosAtualizados[key];
+        }
+      }
+    });
+  }
+  return this.save();
+};
+
+// ✅ CALCULAR ESTOQUE DISPONÍVEL PARA VARIAÇÕES
+restaurantProductSchema.methods.calcularEstoqueVariacao = function(variacaoId) {
+  if (this.tipo === 'produto_simples') {
+    const variacao = this.variacoes.find(v => v.id === variacaoId);
+    return variacao?.estoque?.quantidade || 0;
+  }
+
+  if (this.tipo === 'produto_variavel') {
+    const variacao = this.variacoes.find(v => v.id === variacaoId);
+    if (!variacao) return 0;
+
+    const volumeTotalDisponivel = this.estoque_base.volume_total || 0;
+    const volumePorVariacao = variacao.quantidade;
+
+    if (volumePorVariacao <= 0) return 0;
+
+    return Math.floor(volumeTotalDisponivel / volumePorVariacao);
+  }
+
+  if (this.tipo === 'produto_composto') {
+    return this.calcularEstoqueDisponivelComposto();
+  }
+
+  return 0;
+};
+
+// ✅ CALCULAR ESTOQUE PARA PRODUTOS COMPOSTOS
+restaurantProductSchema.methods.calcularEstoqueDisponivelComposto = function() {
+  if (this.componentes.length === 0) return 0;
+
+  let menorEstoque = Infinity;
+
+  this.componentes.forEach(componente => {
+    // Esta função seria chamada com populate dos produtos componentes
+    // Por simplicidade, retornamos 0 se não tiver os dados dos componentes
+    menorEstoque = 0;
+  });
+
+  return menorEstoque === Infinity ? 0 : menorEstoque;
+};
+
+// ✅ OBTER TODAS AS VARIAÇÕES COM ESTOQUE CALCULADO
+restaurantProductSchema.methods.getVariacoesComEstoque = function() {
+  if (this.variacoes.length === 0) {
+    // Para produtos sem variações, criar uma variação padrão
+    return [{
+      id: 'default',
+      nome: this.nome,
+      quantidade: 1,
+      unidade: 'unidade',
+      preco: this.preco || 0,
+      estoque_disponivel: this.estoque || 0,
+      ativo: this.ativo,
+      estoque: {
+        quantidade: this.estoque || 0,
+        minimo: 5,
+        maximo: 100
+      }
+    }];
+  }
+
+  return this.variacoes.map(variacao => ({
+    ...variacao.toObject(),
+    estoque_disponivel: this.calcularEstoqueVariacao(variacao.id),
+    disponivel: this.calcularEstoqueVariacao(variacao.id) > 0
+  }));
+};
+
+// ✅ MÉTODOS DE ESTOQUE
+
+// Atualizar estoque
+restaurantProductSchema.methods.updateStock = function(quantity, operation = 'subtract', variacaoId = null) {
+  if (this.tipo === 'produto_simples' && variacaoId) {
+    // Atualizar estoque de variação específica
+    const variacao = this.variacoes.find(v => v.id === variacaoId);
+    if (variacao) {
+      if (operation === 'add') {
+        variacao.estoque.quantidade += quantity;
+      } else if (operation === 'subtract') {
+        variacao.estoque.quantidade = Math.max(0, variacao.estoque.quantidade - quantity);
+      } else if (operation === 'set') {
+        variacao.estoque.quantidade = Math.max(0, quantity);
+      }
+    }
+  } else if (this.tipo === 'produto_variavel') {
+    // Atualizar estoque base
+    if (operation === 'add') {
+      this.estoque_base.quantidade += quantity;
+    } else if (operation === 'subtract') {
+      this.estoque_base.quantidade = Math.max(0, this.estoque_base.quantidade - quantity);
+    } else if (operation === 'set') {
+      this.estoque_base.quantidade = Math.max(0, quantity);
+    }
+    
+    // Recalcular volume total
+    this.estoque_base.volume_total = this.estoque_base.quantidade * this.estoque_base.volume_por_unidade;
+  } else {
+    // Produto simples sem variações
+    if (operation === 'add') {
+      this.estoque += quantity;
+    } else if (operation === 'subtract') {
+      this.estoque = Math.max(0, this.estoque - quantity);
+    } else if (operation === 'set') {
+      this.estoque = Math.max(0, quantity);
+    }
+  }
+  
+  return this.save();
+};
+
+// Registrar venda
+restaurantProductSchema.methods.recordSale = function(quantity = 1, variacaoId = null) {
+  this.vendas.total_vendido += quantity;
+  this.vendas.ultima_venda = new Date();
+  this.vendas.vendas_mes += quantity;
+  
+  // Reduzir estoque
+  this.updateStock(quantity, 'subtract', variacaoId);
+  
+  return this.save();
+};
+
+// Calcular valor do estoque
+restaurantProductSchema.methods.getStockValue = function() {
+  if (this.tipo === 'produto_simples' && this.variacoes.length > 0) {
+    return this.variacoes.reduce((total, variacao) => {
+      const estoqueVariacao = variacao.estoque?.quantidade || 0;
+      return total + (estoqueVariacao * variacao.preco);
+    }, 0);
+  }
+  
+  if (this.tipo === 'produto_variavel') {
+    const variacaoMaisCara = this.variacoes.reduce((max, v) => v.preco > max.preco ? v : max, { preco: 0 });
+    return this.estoque_base.quantidade * (variacaoMaisCara.preco || 0);
+  }
+  
+  return this.estoque * (this.preco || 0);
+};
+
+// ✅ MÉTODOS ESTÁTICOS PARA CATEGORIAS
+restaurantCategorySchema.statics.findAllOrdered = function() {
+  return this.find({ isActive: true }).sort({ order: 1, name: 1 });
+};
+
+restaurantCategorySchema.statics.reorderCategories = async function(orderedIds) {
+  const updatePromises = orderedIds.map((id, index) => 
+    this.findByIdAndUpdate(id, { order: index }, { new: true })
+  );
+  
+  return Promise.all(updatePromises);
+};
+
+// ✅ CRIAR MODELOS
+const RestaurantCategory = mongoose.model('RestaurantCategory', restaurantCategorySchema);
+const RestaurantProduct = mongoose.model('RestaurantProduct', restaurantProductSchema);
+
+module.exports = { RestaurantProduct, RestaurantCategory };
