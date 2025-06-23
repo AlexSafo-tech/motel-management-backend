@@ -104,6 +104,36 @@ const reservationSchema = new mongoose.Schema({
     maxlength: 500
   },
   
+  // ✅ CAMPOS DE TURNO
+  turnoInfo: {
+    turnoId: {
+      type: String,
+      default: null,
+      index: true
+    },
+    turnoNome: {
+      type: String, // 'Manhã', 'Tarde', 'Noite'
+      default: null
+    },
+    funcionarioTurno: {
+      type: String,
+      default: null
+    },
+    funcionarioTurnoId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null
+    },
+    dataInicioTurno: {
+      type: Date,
+      default: null
+    },
+    horaInicioTurno: {
+      type: String,
+      default: null
+    }
+  },
+  
   // ✅ AUDITORIA
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,
@@ -140,6 +170,8 @@ const reservationSchema = new mongoose.Schema({
 reservationSchema.index({ status: 1, createdAt: -1 });
 reservationSchema.index({ roomId: 1, checkIn: 1 });
 reservationSchema.index({ customerName: 'text', customerPhone: 'text' });
+reservationSchema.index({ 'turnoInfo.turnoId': 1, createdAt: -1 });
+reservationSchema.index({ 'turnoInfo.funcionarioTurnoId': 1, createdAt: -1 });
 
 // ✅ MIDDLEWARE PRE-VALIDATE CORRIGIDO - EVITA DUPLICATAS
 reservationSchema.pre('validate', async function(next) {
@@ -251,6 +283,41 @@ reservationSchema.statics.getTodayStats = async function() {
     confirmed: 0,
     checkedIn: 0,
     checkedOut: 0
+  };
+};
+
+reservationSchema.statics.getReservasPorTurno = async function(turnoId) {
+  const reservas = await this.find({ 
+    'turnoInfo.turnoId': turnoId,
+    status: { $in: ['confirmed', 'checked-in', 'checked-out'] }
+  }).sort({ createdAt: -1 });
+  
+  // Calcular faturamento por forma de pagamento
+  const faturamento = reservas.reduce((acc, reserva) => {
+    const valor = reserva.totalPrice || 0;
+    
+    switch(reserva.paymentMethod) {
+      case 'cash':
+        acc.dinheiro += valor;
+        break;
+      case 'card':
+        acc.cartao += valor;
+        break;
+      case 'pix':
+        acc.pix += valor;
+        break;
+      default:
+        acc.dinheiro += valor; // Default para dinheiro
+    }
+    
+    acc.total += valor;
+    return acc;
+  }, { dinheiro: 0, cartao: 0, pix: 0, total: 0 });
+  
+  return {
+    reservas,
+    faturamento,
+    quantidade: reservas.length
   };
 };
 
