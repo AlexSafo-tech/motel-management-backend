@@ -9,6 +9,32 @@ const { authenticate } = require('../middleware/auth');
 
 console.log('✅ Modelo Reservation importado com sucesso');
 
+// ✅ FUNÇÃO PARA DETECTAR TURNO ATUAL
+const detectarTurnoAtual = (user) => {
+  const agora = new Date();
+  const hora = agora.getHours();
+  
+  let turnoAtual;
+  if (hora >= 6 && hora < 14) {
+    turnoAtual = { id: 'manha', nome: 'Manhã' };
+  } else if (hora >= 14 && hora < 22) {
+    turnoAtual = { id: 'tarde', nome: 'Tarde' };
+  } else {
+    turnoAtual = { id: 'noite', nome: 'Noite' };
+  }
+  
+  const turnoId = `turno_${turnoAtual.id}_${agora.toISOString().split('T')[0]}_${user._id}`;
+  
+  return {
+    turnoId: turnoId,
+    turnoNome: turnoAtual.nome,
+    funcionarioTurno: user.name || 'Funcionário',
+    funcionarioTurnoId: user._id,
+    dataInicioTurno: agora,
+    horaInicioTurno: agora.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+  };
+};
+
 // ✅ FUNÇÃO PARA BUSCAR QUARTO DISPONÍVEL
 const buscarQuartoDisponivel = async () => {
   try {
@@ -510,6 +536,9 @@ router.post('/', authenticate, async (req, res) => {
       console.log('⚠️ Nome do cliente não fornecido ou inválido, usando padrão');
     }
 
+    // ✅ DETECTAR TURNO AUTOMATICAMENTE
+    const turnoAtual = detectarTurnoAtual(req.user);
+
     // ✅ DADOS SEGUROS PARA SALVAR
     const reservationData = {
       // 🚨 DADOS DO CLIENTE - USAR OS VALORES CORRETOS
@@ -535,7 +564,9 @@ router.post('/', authenticate, async (req, res) => {
       paymentStatus: 'paid',
       
       notes: `Cliente: ${finalCustomerName} | Tel: ${customerPhone || 'N/A'} | Pagto: ${paymentMethod || 'N/A'}`,
-      createdBy: req.user._id
+      createdBy: req.user._id,
+      
+      turnoInfo: turnoAtual
     };
 
     console.log('💾 === DADOS FINAIS PARA SALVAR ===');
@@ -792,6 +823,82 @@ router.get('/stats/overview', authenticate, async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Erro ao buscar estatísticas:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erro interno do servidor'
+    });
+  }
+});
+
+// ✅ NOVA ROTA PARA BUSCAR RESERVAS POR TURNO
+router.get('/turno/:turnoId', authenticate, async (req, res) => {
+  try {
+    const { turnoId } = req.params;
+    
+    console.log('🕐 Buscando reservas do turno:', turnoId);
+    
+    const dadosTurno = await Reservation.getReservasPorTurno(turnoId);
+    
+    res.json({
+      success: true,
+      data: {
+        turnoId: turnoId,
+        reservas: dadosTurno.reservas,
+        faturamento: dadosTurno.faturamento,
+        quantidade: dadosTurno.quantidade
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Erro ao buscar reservas do turno:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erro interno do servidor'
+    });
+  }
+});
+
+// ✅ NOVA ROTA PARA ESTATÍSTICAS DE TURNOS
+router.get('/turnos/estatisticas', authenticate, async (req, res) => {
+  try {
+    const hoje = new Date();
+    const inicioHoje = new Date(hoje.setHours(0, 0, 0, 0));
+    const fimHoje = new Date(hoje.setHours(23, 59, 59, 999));
+    
+    const estatisticas = await Reservation.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: inicioHoje, $lte: fimHoje },
+          'turnoInfo.turnoId': { $ne: null }
+        }
+      },
+      {
+        $group: {
+          _id: {
+            turnoId: '$turnoInfo.turnoId',
+            turnoNome: '$turnoInfo.turnoNome',
+            funcionario: '$turnoInfo.funcionarioTurno'
+          },
+          totalReservas: { $sum: 1 },
+          faturamentoTotal: { $sum: '$totalPrice' },
+          reservas: { $push: '$$ROOT' }
+        }
+      },
+      {
+        $sort: { '_id.turnoId': 1 }
+      }
+    ]);
+    
+    res.json({
+      success: true,
+      data: {
+        estatisticasPorTurno: estatisticas,
+        totalTurnos: estatisticas.length
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Erro ao buscar estatísticas de turnos:', error);
     res.status(500).json({
       success: false,
       message: 'Erro interno do servidor'
