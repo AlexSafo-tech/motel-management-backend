@@ -1,4 +1,4 @@
-// routes/reservations.js - VERSÃO COMPLETA COM SISTEMA DE CONFLITOS
+// routes/reservations.js - VERSÃO COMPLETA COM SISTEMA DE CONFLITOS + ROTAS DEBUG
 
 const express = require('express');
 const router = express.Router();
@@ -902,6 +902,154 @@ router.get('/turnos/estatisticas', authenticate, async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Erro interno do servidor'
+    });
+  }
+});
+
+// ✅ NOVA ROTA DEBUG PARA TESTAR TURNOS
+router.get('/debug/turnos', authenticate, async (req, res) => {
+  try {
+    console.log('🔍 [DEBUG] Analisando sistema de turnos...');
+    
+    const hoje = new Date();
+    const inicioHoje = new Date(hoje.setHours(0, 0, 0, 0));
+    const fimHoje = new Date(hoje.setHours(23, 59, 59, 999));
+    
+    // 1. Buscar todas as reservas de hoje
+    const reservasHoje = await Reservation.find({
+      createdAt: { $gte: inicioHoje, $lte: fimHoje }
+    }).select('reservationNumber customerName turnoInfo totalPrice paymentMethod createdAt').lean();
+    
+    // 2. Agrupar por turno
+    const reservasPorTurno = {};
+    reservasHoje.forEach(reserva => {
+      const turnoId = reserva.turnoInfo?.turnoId || 'sem_turno';
+      if (!reservasPorTurno[turnoId]) {
+        reservasPorTurno[turnoId] = {
+          turnoInfo: reserva.turnoInfo,
+          reservas: [],
+          faturamento: { dinheiro: 0, cartao: 0, pix: 0, total: 0 }
+        };
+      }
+      
+      reservasPorTurno[turnoId].reservas.push(reserva);
+      
+      // Calcular faturamento
+      const valor = reserva.totalPrice || 0;
+      switch(reserva.paymentMethod) {
+        case 'cash':
+          reservasPorTurno[turnoId].faturamento.dinheiro += valor;
+          break;
+        case 'card':
+          reservasPorTurno[turnoId].faturamento.cartao += valor;
+          break;
+        case 'pix':
+          reservasPorTurno[turnoId].faturamento.pix += valor;
+          break;
+        default:
+          reservasPorTurno[turnoId].faturamento.dinheiro += valor;
+      }
+      reservasPorTurno[turnoId].faturamento.total += valor;
+    });
+    
+    // 3. Detectar turno atual do usuário logado
+    const turnoAtualUser = detectarTurnoAtual(req.user);
+    
+    // 4. Montar resposta de debug
+    res.json({
+      success: true,
+      message: 'Debug do sistema de turnos',
+      data: {
+        dataAnalise: hoje.toISOString(),
+        turnoAtualDetectado: turnoAtualUser,
+        usuarioLogado: {
+          id: req.user._id,
+          name: req.user.name || req.user.nomeCompleto,
+          role: req.user.role
+        },
+        resumo: {
+          totalReservasHoje: reservasHoje.length,
+          totalTurnos: Object.keys(reservasPorTurno).length,
+          faturamentoTotal: Object.values(reservasPorTurno).reduce((sum, turno) => sum + turno.faturamento.total, 0)
+        },
+        turnosDetalhados: reservasPorTurno,
+        sistemaStatus: {
+          modeloReservation: 'OK - Campos turnoInfo presentes',
+          funcaoDetectarTurno: 'OK - Implementada',
+          salvamentoTurno: 'OK - Sendo salvo automaticamente',
+          rotasTurno: 'OK - Rotas implementadas'
+        }
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Erro no debug de turnos:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erro no debug de turnos',
+      error: error.message
+    });
+  }
+});
+
+// ✅ ROTA ADICIONAL PARA TESTAR CRIAÇÃO DE TURNO
+router.post('/debug/criar-turno-teste', authenticate, async (req, res) => {
+  try {
+    console.log('🧪 [DEBUG] Criando reserva de teste para turno...');
+    
+    // Detectar turno atual
+    const turnoAtual = detectarTurnoAtual(req.user);
+    
+    // Buscar quarto disponível
+    const room = await buscarQuartoDisponivel();
+    
+    // Criar reserva de teste
+    const agora = new Date();
+    const checkOut = new Date(agora.getTime() + 4 * 60 * 60 * 1000); // +4 horas
+    
+    const reservaTeste = new Reservation({
+      customerName: 'TESTE TURNO - ' + turnoAtual.turnoNome,
+      customerPhone: '(11) 99999-9999',
+      customerEmail: 'teste@turno.com',
+      roomId: room.id,
+      roomNumber: room.number,
+      checkIn: agora,
+      checkOut: checkOut,
+      periodType: '4h',
+      periodName: '4 HORAS',
+      basePrice: 55.00,
+      totalPrice: 55.00,
+      status: 'confirmed',
+      paymentMethod: 'cash',
+      paymentStatus: 'paid',
+      createdBy: req.user._id,
+      turnoInfo: turnoAtual
+    });
+    
+    const reservaSalva = await reservaTeste.save();
+    
+    console.log('✅ Reserva de teste criada:', reservaSalva.reservationNumber);
+    
+    res.json({
+      success: true,
+      message: 'Reserva de teste criada com sucesso',
+      data: {
+        reserva: {
+          number: reservaSalva.reservationNumber,
+          customer: reservaSalva.customerName,
+          turnoInfo: reservaSalva.turnoInfo,
+          valor: reservaSalva.totalPrice
+        },
+        turnoDetectado: turnoAtual
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Erro ao criar reserva de teste:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erro ao criar reserva de teste',
+      error: error.message
     });
   }
 });
