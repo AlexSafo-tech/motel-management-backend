@@ -1,6 +1,43 @@
-// models/Reservation.js - MODELO COMPLETO CORRIGIDO
+// models/Reservation.js - MODELO COMPLETO CORRIGIDO COM ENUM DINÂMICO
 
 const mongoose = require('mongoose');
+
+// ✅ FUNÇÃO PARA BUSCAR PERÍODOS VÁLIDOS DO MONGODB
+const obterPeriodosValidos = async () => {
+  try {
+    // Verificar se o modelo Period existe
+    let Period;
+    try {
+      Period = mongoose.model('Period');
+    } catch (error) {
+      // Se não existir, tentar importar (ajustar caminho se necessário)
+      try {
+        Period = require('./Period');
+      } catch (importError) {
+        console.warn('⚠️ Modelo Period não encontrado, usando enum padrão');
+        return ['3h', '4h', '6h', '12h', '1hora', 'daily', 'pernoite', 'dayuse'];
+      }
+    }
+    
+    const periodos = await Period.find({ 
+      active: true,
+      isActive: { $ne: false }
+    }).distinct('periodType');
+    
+    console.log('✅ Períodos válidos do MongoDB:', periodos);
+    
+    // Garantir que temos pelo menos os básicos
+    const periodosBasicos = ['3h', '4h', '6h', '12h', 'daily', 'pernoite'];
+    const todosOsPeriodos = [...new Set([...periodosBasicos, ...periodos])];
+    
+    return todosOsPeriodos;
+    
+  } catch (error) {
+    console.error('❌ Erro ao buscar períodos do MongoDB:', error);
+    // Fallback para enum padrão
+    return ['3h', '4h', '6h', '12h', '1hora', 'daily', 'pernoite', 'dayuse'];
+  }
+};
 
 // ✅ SCHEMA COMPLETO E ROBUSTO
 const reservationSchema = new mongoose.Schema({
@@ -56,11 +93,35 @@ const reservationSchema = new mongoose.Schema({
     required: true 
   },
   
-  // ✅ PERÍODO E VALORES
+  // ✅ PERÍODO - VALIDAÇÃO DINÂMICA BASEADA NO MONGODB
   periodType: { 
     type: String,
-    enum: ['3h', '4h', '6h', '12h', 'daily', 'pernoite'],
-    default: '4h' 
+    required: true,
+    // ✅ VALIDAÇÃO DINÂMICA BASEADA NO MONGODB
+    validate: {
+      validator: async function(value) {
+        try {
+          const periodosValidos = await obterPeriodosValidos();
+          const isValid = periodosValidos.includes(value);
+          
+          if (!isValid) {
+            console.error(`❌ Período inválido: ${value}`);
+            console.log(`✅ Períodos válidos: ${periodosValidos.join(', ')}`);
+          }
+          
+          return isValid;
+        } catch (error) {
+          console.error('❌ Erro na validação de período:', error);
+          // Em caso de erro, aceitar valores básicos
+          const basicPeriods = ['3h', '4h', '6h', '12h', '1hora', 'daily', 'pernoite', 'dayuse'];
+          return basicPeriods.includes(value);
+        }
+      },
+      message: function(props) {
+        return `'${props.value}' não é um tipo de período válido no sistema. Verifique os períodos ativos no MongoDB.`;
+      }
+    },
+    default: '4h'
   },
   periodName: { 
     type: String, 
@@ -172,6 +233,7 @@ reservationSchema.index({ roomId: 1, checkIn: 1 });
 reservationSchema.index({ customerName: 'text', customerPhone: 'text' });
 reservationSchema.index({ 'turnoInfo.turnoId': 1, createdAt: -1 });
 reservationSchema.index({ 'turnoInfo.funcionarioTurnoId': 1, createdAt: -1 });
+reservationSchema.index({ periodType: 1 }); // ✅ NOVO: Index para periodType
 
 // ✅ MIDDLEWARE PRE-VALIDATE CORRIGIDO - EVITA DUPLICATAS
 reservationSchema.pre('validate', async function(next) {
@@ -217,6 +279,20 @@ reservationSchema.pre('validate', async function(next) {
   
   next();
 });
+
+// ✅ MÉTODO ESTÁTICO PARA VALIDAR PERÍODO
+reservationSchema.statics.validarPeriodo = async function(periodType) {
+  try {
+    const periodosValidos = await obterPeriodosValidos();
+    return periodosValidos.includes(periodType);
+  } catch (error) {
+    console.error('❌ Erro ao validar período:', error);
+    return false;
+  }
+};
+
+// ✅ MÉTODO ESTÁTICO PARA OBTER PERÍODOS VÁLIDOS
+reservationSchema.statics.obterPeriodosValidos = obterPeriodosValidos;
 
 // ✅ MÉTODOS DE INSTÂNCIA
 reservationSchema.methods.getDuration = function() {
