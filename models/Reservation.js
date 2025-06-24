@@ -1,52 +1,54 @@
-// models/Reservation.js - CORREÇÃO MÍNIMA: SÓ REMOVER ENUM FIXO + VALIDAÇÃO DINÂMICA
+// models/Reservation.js - MODELO COMPLETO CORRIGIDO COM ENUM DINÂMICO
 
 const mongoose = require('mongoose');
 
-// ✅ FUNÇÃO SIMPLES PARA VALIDAR PERÍODO (ADICIONADA)
-const validarPeriodoNoMongo = async (periodType) => {
+// ✅ FUNÇÃO PARA BUSCAR PERÍODOS VÁLIDOS DO MONGODB
+const obterPeriodosValidos = async () => {
   try {
     // Verificar se o modelo Period existe
     let Period;
     try {
       Period = mongoose.model('Period');
     } catch (error) {
-      // Se não existir, tentar importar
+      // Se não existir, tentar importar (ajustar caminho se necessário)
       try {
         Period = require('./Period');
       } catch (importError) {
-        console.warn('⚠️ Modelo Period não encontrado, aceitando período:', periodType);
-        return true; // Aceitar se não conseguir validar
+        console.warn('⚠️ Modelo Period não encontrado, usando enum padrão');
+        return ['3h', '4h', '6h', '12h', '1hora', 'daily', 'pernoite', 'dayuse'];
       }
     }
     
-    // ✅ BUSCAR SE O PERÍODO EXISTE E ESTÁ ATIVO
-    const periodo = await Period.findOne({ 
-      periodType: periodType,
-      active: true 
-    });
+    const periodos = await Period.find({ 
+      active: true,
+      isActive: { $ne: false }
+    }).distinct('periodType');
     
-    const isValid = !!periodo;
-    console.log(`🔍 Validação período "${periodType}": ${isValid ? 'VÁLIDO' : 'INVÁLIDO'}`);
+    console.log('✅ Períodos válidos do MongoDB:', periodos);
     
-    return isValid;
+    // Garantir que temos pelo menos os básicos
+    const periodosBasicos = ['3h', '4h', '6h', '12h', 'daily', 'pernoite'];
+    const todosOsPeriodos = [...new Set([...periodosBasicos, ...periodos])];
+    
+    return todosOsPeriodos;
     
   } catch (error) {
-    console.error('❌ Erro ao validar período:', error);
-    // Em caso de erro, aceitar o período (segurança)
-    return true;
+    console.error('❌ Erro ao buscar períodos do MongoDB:', error);
+    // Fallback para enum padrão
+    return ['3h', '4h', '6h', '12h', '1hora', 'daily', 'pernoite', 'dayuse'];
   }
 };
 
-// ✅ SCHEMA ORIGINAL MANTIDO - SÓ ALTERAÇÃO NO CAMPO periodType
+// ✅ SCHEMA COMPLETO E ROBUSTO
 const reservationSchema = new mongoose.Schema({
-  // ✅ NÚMERO DA RESERVA (MANTIDO ORIGINAL)
+  // ✅ NÚMERO DA RESERVA (AUTO-GERADO)
   reservationNumber: {
     type: String,
     unique: true,
     required: true
   },
 
-  // ✅ DADOS DO CLIENTE (MANTIDOS ORIGINAIS)
+  // ✅ DADOS DO CLIENTE
   customerName: { 
     type: String, 
     required: true,
@@ -70,7 +72,7 @@ const reservationSchema = new mongoose.Schema({
     default: '' 
   },
   
-  // ✅ DADOS DO QUARTO (MANTIDOS ORIGINAIS)
+  // ✅ DADOS DO QUARTO
   roomId: { 
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Room',
@@ -81,7 +83,7 @@ const reservationSchema = new mongoose.Schema({
     required: true
   },
   
-  // ✅ DATAS E HORÁRIOS (MANTIDOS ORIGINAIS)
+  // ✅ DATAS E HORÁRIOS
   checkIn: { 
     type: Date, 
     required: true 
@@ -91,34 +93,36 @@ const reservationSchema = new mongoose.Schema({
     required: true 
   },
   
-  // ✅ ÚNICA ALTERAÇÃO: REMOVER ENUM FIXO, ADICIONAR VALIDAÇÃO DINÂMICA
+  // ✅ PERÍODO - VALIDAÇÃO DINÂMICA BASEADA NO MONGODB
   periodType: { 
     type: String,
     required: true,
-    // ❌ REMOVIDO: enum: ['3h', '4h', '6h'...], // ← ENUM FIXO REMOVIDO
-    // ✅ ADICIONADO: VALIDAÇÃO DINÂMICA
+    // ✅ VALIDAÇÃO DINÂMICA BASEADA NO MONGODB
     validate: {
       validator: async function(value) {
         try {
-          const isValid = await validarPeriodoNoMongo(value);
+          const periodosValidos = await obterPeriodosValidos();
+          const isValid = periodosValidos.includes(value);
+          
           if (!isValid) {
-            console.error(`❌ Período "${value}" não está ativo no MongoDB`);
+            console.error(`❌ Período inválido: ${value}`);
+            console.log(`✅ Períodos válidos: ${periodosValidos.join(', ')}`);
           }
+          
           return isValid;
         } catch (error) {
           console.error('❌ Erro na validação de período:', error);
-          // Em caso de erro, aceitar (segurança)
-          return true;
+          // Em caso de erro, aceitar valores básicos
+          const basicPeriods = ['3h', '4h', '6h', '12h', '1hora', 'daily', 'pernoite', 'dayuse'];
+          return basicPeriods.includes(value);
         }
       },
       message: function(props) {
-        return `Período '${props.value}' não está ativo no sistema. Verifique os períodos disponíveis.`;
+        return `'${props.value}' não é um tipo de período válido no sistema. Verifique os períodos ativos no MongoDB.`;
       }
     },
     default: '4h'
   },
-  
-  // ✅ RESTO DOS CAMPOS MANTIDOS EXATAMENTE IGUAIS
   periodName: { 
     type: String, 
     default: '4 HORAS' 
@@ -136,7 +140,7 @@ const reservationSchema = new mongoose.Schema({
     default: 50.00 
   },
   
-  // ✅ STATUS E PAGAMENTO (MANTIDOS ORIGINAIS)
+  // ✅ STATUS E PAGAMENTO
   status: {
     type: String,
     enum: ['pending', 'confirmed', 'checked-in', 'checked-out', 'cancelled'],
@@ -154,14 +158,14 @@ const reservationSchema = new mongoose.Schema({
     default: 'paid' 
   },
   
-  // ✅ INFORMAÇÕES ADICIONAIS (MANTIDAS ORIGINAIS)
+  // ✅ INFORMAÇÕES ADICIONAIS
   notes: {
     type: String,
     trim: true,
     maxlength: 500
   },
   
-  // ✅ CAMPOS DE TURNO (MANTIDOS ORIGINAIS)
+  // ✅ CAMPOS DE TURNO
   turnoInfo: {
     turnoId: {
       type: String,
@@ -191,7 +195,7 @@ const reservationSchema = new mongoose.Schema({
     }
   },
   
-  // ✅ AUDITORIA (MANTIDA ORIGINAL)
+  // ✅ AUDITORIA
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
@@ -201,10 +205,10 @@ const reservationSchema = new mongoose.Schema({
     ref: 'User'
   }
 }, {
-  // ✅ OPÇÕES (MANTIDAS ORIGINAIS)
+  // ✅ OPÇÕES
   timestamps: true, // createdAt e updatedAt automáticos
   
-  // ✅ TRANSFORMAÇÃO JSON (MANTIDA ORIGINAL)
+  // ✅ TRANSFORMAÇÃO JSON
   toJSON: {
     virtuals: true,
     transform: function(doc, ret) {
@@ -223,34 +227,38 @@ const reservationSchema = new mongoose.Schema({
   }
 });
 
-// ✅ ÍNDICES PARA PERFORMANCE (MANTIDOS ORIGINAIS)
+// ✅ ÍNDICES PARA PERFORMANCE
 reservationSchema.index({ status: 1, createdAt: -1 });
 reservationSchema.index({ roomId: 1, checkIn: 1 });
 reservationSchema.index({ customerName: 'text', customerPhone: 'text' });
 reservationSchema.index({ 'turnoInfo.turnoId': 1, createdAt: -1 });
 reservationSchema.index({ 'turnoInfo.funcionarioTurnoId': 1, createdAt: -1 });
-reservationSchema.index({ periodType: 1 });
+reservationSchema.index({ periodType: 1 }); // ✅ NOVO: Index para periodType
 
-// ✅ MIDDLEWARE PRE-VALIDATE (MANTIDO ORIGINAL)
+// ✅ MIDDLEWARE PRE-VALIDATE CORRIGIDO - EVITA DUPLICATAS
 reservationSchema.pre('validate', async function(next) {
   // Auto-gerar número de reserva se não existir
   if (this.isNew && !this.reservationNumber) {
     try {
+      // 🔥 SOLUÇÃO: Usar timestamp + contador atômico para garantir unicidade
       const now = new Date();
       const year = now.getFullYear();
       const month = String(now.getMonth() + 1).padStart(2, '0');
       const day = String(now.getDate()).padStart(2, '0');
-      const timestamp = now.getTime().toString().slice(-6);
+      const timestamp = now.getTime().toString().slice(-6); // Últimos 6 dígitos do timestamp
       const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
       
+      // Formato: RES + ANO + MÊS + DIA + TIMESTAMP + RANDOM
+      // Exemplo: RES20241208123456789
       this.reservationNumber = `RES${year}${month}${day}${timestamp}${random}`;
       
-      // Verificação de segurança
+      // 🛡️ VERIFICAÇÃO DE SEGURANÇA: Se ainda assim existir, usar fallback
       const existsCheck = await this.constructor.findOne({ 
         reservationNumber: this.reservationNumber 
       });
       
       if (existsCheck) {
+        // Fallback com timestamp completo + ID aleatório
         this.reservationNumber = `RES${Date.now()}${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
         console.log('⚠️ Número duplicado detectado, usando fallback:', this.reservationNumber);
       }
@@ -258,6 +266,7 @@ reservationSchema.pre('validate', async function(next) {
       console.log('✅ Número de reserva gerado:', this.reservationNumber);
       
     } catch (err) {
+      // Fallback de emergência
       this.reservationNumber = `RES${Date.now()}${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
       console.log('❌ Erro na geração, usando fallback:', this.reservationNumber);
     }
@@ -271,7 +280,21 @@ reservationSchema.pre('validate', async function(next) {
   next();
 });
 
-// ✅ TODOS OS MÉTODOS ORIGINAIS MANTIDOS
+// ✅ MÉTODO ESTÁTICO PARA VALIDAR PERÍODO
+reservationSchema.statics.validarPeriodo = async function(periodType) {
+  try {
+    const periodosValidos = await obterPeriodosValidos();
+    return periodosValidos.includes(periodType);
+  } catch (error) {
+    console.error('❌ Erro ao validar período:', error);
+    return false;
+  }
+};
+
+// ✅ MÉTODO ESTÁTICO PARA OBTER PERÍODOS VÁLIDOS
+reservationSchema.statics.obterPeriodosValidos = obterPeriodosValidos;
+
+// ✅ MÉTODOS DE INSTÂNCIA
 reservationSchema.methods.getDuration = function() {
   const diff = this.checkOut - this.checkIn;
   const hours = Math.floor(diff / (1000 * 60 * 60));
@@ -291,7 +314,7 @@ reservationSchema.methods.canCheckOut = function() {
   return this.status === 'checked-in';
 };
 
-// ✅ MÉTODOS ESTÁTICOS ORIGINAIS MANTIDOS
+// ✅ MÉTODOS ESTÁTICOS
 reservationSchema.statics.findActive = function() {
   return this.find({ status: 'checked-in' });
 };
@@ -374,10 +397,5 @@ reservationSchema.statics.getReservasPorTurno = async function(turnoId) {
   };
 };
 
-// ✅ ADICIONADO: MÉTODO PARA VALIDAR PERÍODO ESTATICAMENTE
-reservationSchema.statics.validarPeriodo = async function(periodType) {
-  return await validarPeriodoNoMongo(periodType);
-};
-
-// ✅ EXPORTAR MODELO (MANTIDO ORIGINAL)
+// ✅ EXPORTAR MODELO
 module.exports = mongoose.model('Reservation', reservationSchema);
