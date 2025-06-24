@@ -1,79 +1,54 @@
-// models/Period.js - MODELO CORRIGIDO PARA ESTRUTURA REAL DO MONGODB
-
+// models/Period.js - MODELO DE PERÍODOS (estrutura de tempo)
 const mongoose = require('mongoose');
 
-// ✅ SCHEMA BASEADO NA ESTRUTURA REAL VISTA NA IMAGEM DO MONGODB
 const periodSchema = new mongoose.Schema({
-  // ✅ CAMPOS CONFORME MONGODB REAL
-  periodType: {
+  id: {
     type: String,
-    required: [true, 'Tipo do período é obrigatório'],
+    required: [true, 'ID do período é obrigatório'],
     unique: true,
     trim: true,
     lowercase: true,
-    index: true
-  },
-
-  periodName: {
-    type: String,
-    required: [true, 'Nome do período é obrigatório'],
-    trim: true,
-    uppercase: true,
-    maxlength: [50, 'Nome não pode ter mais de 50 caracteres']
-  },
-
-  // ✅ PREÇO BASE (CONFORME IMAGEM DO MONGODB)
-  basePrice: {
-    type: Number,
-    required: [true, 'Preço base é obrigatório'],
-    min: [0, 'Preço não pode ser negativo'],
-    default: 50.00
-  },
-
-  // ✅ DESCRIÇÃO
-  description: {
-    type: String,
-    trim: true,
-    maxlength: [200, 'Descrição não pode ter mais de 200 caracteres']
-  },
-
-  // ✅ STATUS ATIVO (CONFORME IMAGEM)
-  active: {
-    type: Boolean,
-    default: true,
-    required: true,
-    index: true
-  },
-
-  // ✅ ORDEM DE EXIBIÇÃO
-  order: {
-    type: Number,
-    default: 0,
-    min: [0, 'Ordem não pode ser negativa']
-  },
-
-  // ✅ CATEGORIA DO PERÍODO
-  category: {
-    type: String,
-    enum: ['hourly', 'overnight', 'daily', 'dayuse'],
-    default: 'hourly'
-  },
-
-  // ✅ DISPONIBILIDADE PARA TIPOS DE RESERVA
-  availableFor: {
-    type: [String],
-    default: ['all'],
     validate: {
       validator: function(v) {
-        return Array.isArray(v) && v.length > 0;
+        return /^[a-z0-9_]+$/.test(v);
       },
-      message: 'Deve ter pelo menos um tipo de disponibilidade'
+      message: 'ID deve conter apenas letras minúsculas, números e underscore'
     }
   },
 
-  // ✅ HORÁRIOS (PARA PERÍODOS ESPECIAIS)
-  checkInTime: {
+  nome: {
     type: String,
+    required: [true, 'Nome do período é obrigatório'],
+    trim: true,
+    maxlength: [50, 'Nome não pode ter mais de 50 caracteres']
+  },
+
+  // Tipo de período
+  tipo: {
+    type: String,
+    enum: ['horario', 'pernoite', 'diaria'],
+    required: true,
+    default: 'horario'
+  },
+
+  // Para períodos por horário APENAS (4h, 6h, 12h)
+  duracaoHoras: {
+    type: Number,
+    min: [1, 'Duração deve ser pelo menos 1 hora'],
+    max: [24, 'Duração não pode passar de 24 horas'],
+    validate: {
+      validator: function(v) {
+        // Obrigatório APENAS para tipo 'horario'
+        // Para 'diaria' e 'pernoite' o que importa é check-in/check-out
+        return this.tipo !== 'horario' || (v && v > 0);
+      },
+      message: 'Duração em horas é obrigatória apenas para períodos por horário'
+    }
+  },
+
+  // Para períodos especiais (pernoite, diária)
+  checkIn: {
+    type: String, // Formato: "22:00"
     validate: {
       validator: function(v) {
         if (!v) return true; // Opcional
@@ -83,8 +58,8 @@ const periodSchema = new mongoose.Schema({
     }
   },
 
-  checkOutTime: {
-    type: String,
+  checkOut: {
+    type: String, // Formato: "12:00"  
     validate: {
       validator: function(v) {
         if (!v) return true; // Opcional
@@ -94,38 +69,46 @@ const periodSchema = new mongoose.Schema({
     }
   },
 
-  // ✅ DURAÇÃO EM HORAS (PARA PERÍODOS POR HORA)
-  durationHours: {
+  // Configurações de disponibilidade
+  disponibilidade: {
+    hoje: { type: Boolean, default: true },
+    agendado: { type: Boolean, default: true },
+    fimDeSemana: { type: Boolean, default: true },
+    feriado: { type: Boolean, default: true }
+  },
+
+  // Descrição e instruções
+  descricao: {
+    type: String,
+    trim: true,
+    maxlength: [200, 'Descrição não pode ter mais de 200 caracteres']
+  },
+
+  instrucoes: {
+    type: String,
+    trim: true,
+    maxlength: [500, 'Instruções não podem ter mais de 500 caracteres']
+  },
+
+  // Controles
+  ativo: {
+    type: Boolean,
+    default: true
+  },
+
+  ordem: {
     type: Number,
-    min: [0.5, 'Duração deve ser pelo menos 30 minutos'],
-    max: [48, 'Duração não pode passar de 48 horas'],
-    validate: {
-      validator: function(v) {
-        // Obrigatório apenas para categoria 'hourly'
-        return this.category !== 'hourly' || (v && v > 0);
-      },
-      message: 'Duração em horas é obrigatória para períodos por hora'
-    }
+    default: 0,
+    min: [0, 'Ordem não pode ser negativa']
   },
 
-  // ✅ CONFIGURAÇÕES DE PREÇO
-  isFixedPrice: {
-    type: Boolean,
-    default: true
-  },
-
-  isFeedbackPeriod: {
-    type: Boolean,
-    default: true
-  },
-
-  // ✅ AUDITORIA
-  createdBy: {
+  // Auditoria
+  criadoPor: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
   },
 
-  updatedBy: {
+  atualizadoPor: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
   }
@@ -134,7 +117,9 @@ const periodSchema = new mongoose.Schema({
   
   toJSON: {
     transform: function(doc, ret) {
-      ret.id = ret.periodType; // Usar periodType como ID
+      ret.id = ret.id || ret._id;
+      delete ret._id;
+      delete ret.__v;
       return ret;
     }
   }
@@ -143,17 +128,17 @@ const periodSchema = new mongoose.Schema({
 // ✅ MIDDLEWARE PRE-SAVE
 periodSchema.pre('save', function(next) {
   // Validações personalizadas
-  if (this.category === 'overnight' && (!this.checkInTime || !this.checkOutTime)) {
+  if (this.tipo === 'pernoite' && (!this.checkIn || !this.checkOut)) {
     return next(new Error('Períodos de pernoite devem ter horários de check-in e check-out'));
   }
   
-  if (this.category === 'daily' && (!this.checkInTime || !this.checkOutTime)) {
+  if (this.tipo === 'diaria' && (!this.checkIn || !this.checkOut)) {
     return next(new Error('Períodos de diária devem ter horários de check-in e check-out'));
   }
   
-  // Para períodos por hora, duração é obrigatória
-  if (this.category === 'hourly' && !this.durationHours) {
-    return next(new Error('Períodos por hora devem ter duração definida'));
+  // Para períodos por horário, duração é obrigatória
+  if (this.tipo === 'horario' && !this.duracaoHoras) {
+    return next(new Error('Períodos por horário devem ter duração definida'));
   }
   
   next();
@@ -161,153 +146,75 @@ periodSchema.pre('save', function(next) {
 
 // ✅ MÉTODOS ESTÁTICOS
 periodSchema.statics.findAtivos = function() {
-  return this.find({ active: true }).sort({ order: 1, periodName: 1 });
+  return this.find({ ativo: true }).sort({ ordem: 1, nome: 1 });
 };
 
-periodSchema.statics.findPorCategoria = function(categoria) {
-  return this.find({ category: categoria, active: true }).sort({ order: 1 });
+periodSchema.statics.findPorTipo = function(tipo) {
+  return this.find({ tipo, ativo: true }).sort({ ordem: 1 });
 };
 
-periodSchema.statics.buscarPorTipo = function(periodType) {
-  return this.findOne({ periodType: periodType });
-};
-
-// ✅ MÉTODO PARA OBTER MAPEAMENTO COMPLETO
-periodSchema.statics.obterMapeamentoCompleto = async function() {
-  try {
-    const periodos = await this.find({ active: true }).sort({ order: 1 });
-    
-    const mapeamento = {
-      nomes: {},
-      precos: {},
-      tipos: [],
-      completo: {}
-    };
-    
-    periodos.forEach(periodo => {
-      const tipo = periodo.periodType;
-      
-      mapeamento.nomes[tipo] = periodo.periodName;
-      mapeamento.precos[tipo] = periodo.basePrice;
-      mapeamento.tipos.push(tipo);
-      mapeamento.completo[tipo] = {
-        nome: periodo.periodName,
-        preco: periodo.basePrice,
-        categoria: periodo.category,
-        descricao: periodo.description,
-        ordem: periodo.order
-      };
-    });
-    
-    return mapeamento;
-    
-  } catch (error) {
-    console.error('❌ Erro ao obter mapeamento:', error);
-    return {
-      nomes: {},
-      precos: {},
-      tipos: [],
-      completo: {}
-    };
-  }
-};
-
-// ✅ CRIAR PERÍODOS PADRÃO CONFORME ESTRUTURA DO MONGODB
+// ✅ CRIAR PERÍODOS PADRÃO
 periodSchema.statics.criarPeriodosPadrao = async function() {
   try {
     const count = await this.countDocuments();
     
     if (count === 0) {
-      console.log('⏰ Criando períodos padrão conforme MongoDB...');
+      console.log('⏰ Criando períodos padrão...');
       
       const periodsPadrao = [
         {
-          periodType: '1hora',
-          periodName: '1 HORA',
-          basePrice: 50,
-          description: 'Período de 1 HORA',
-          category: 'hourly',
-          durationHours: 1,
-          active: true,
-          order: 1,
-          availableFor: ['all'],
-          isFixedPrice: true,
-          isFeedbackPeriod: true
+          id: '4h',
+          nome: '4 Horas',
+          tipo: 'horario',
+          duracaoHoras: 4,
+          descricao: 'Período de 4 horas corridas',
+          ordem: 1
         },
         {
-          periodType: '4h',
-          periodName: '4 HORAS',
-          basePrice: 55,
-          description: 'Período de 4 horas corridas',
-          category: 'hourly',
-          durationHours: 4,
-          active: true,
-          order: 2,
-          availableFor: ['all'],
-          isFixedPrice: true,
-          isFeedbackPeriod: true
+          id: '6h',
+          nome: '6 Horas', 
+          tipo: 'horario',
+          duracaoHoras: 6,
+          descricao: 'Período de 6 horas corridas',
+          ordem: 2
         },
         {
-          periodType: '6h',
-          periodName: '6 HORAS',
-          basePrice: 70,
-          description: 'Período de 6 horas corridas',
-          category: 'hourly',
-          durationHours: 6,
-          active: true,
-          order: 3,
-          availableFor: ['all'],
-          isFixedPrice: true,
-          isFeedbackPeriod: true
+          id: '12h',
+          nome: '12 Horas',
+          tipo: 'horario', 
+          duracaoHoras: 12,
+          descricao: 'Período de 12 horas corridas',
+          ordem: 3
         },
         {
-          periodType: '12h',
-          periodName: '12 HORAS',
-          basePrice: 90,
-          description: 'Período de 12 horas corridas',
-          category: 'hourly',
-          durationHours: 12,
-          active: true,
-          order: 4,
-          availableFor: ['all'],
-          isFixedPrice: true,
-          isFeedbackPeriod: true
+          id: 'diaria',
+          nome: 'Diária',
+          tipo: 'diaria',
+          // ❌ REMOVIDO: duracaoHoras (irrelevante para diária)
+          checkIn: '14:00',
+          checkOut: '12:00',
+          descricao: 'Diária completa - check-in 14h, check-out 12h do dia seguinte',
+          instrucoes: 'Check-in a partir das 14h. Check-out até 12h do dia seguinte.',
+          ordem: 4
         },
         {
-          periodType: 'pernoite',
-          periodName: 'PERNOITE',
-          basePrice: 100,
-          description: 'Pernoite - Checkout às 12h',
-          category: 'overnight',
-          checkInTime: '20:00',
-          checkOutTime: '12:00',
-          active: true,
-          order: 6,
-          availableFor: ['all'],
-          isFixedPrice: true,
-          isFeedbackPeriod: true
-        },
-        {
-          periodType: 'daily',
-          periodName: 'DIÁRIA',
-          basePrice: 120,
-          description: 'Período de DIÁRIA',
-          category: 'daily',
-          checkInTime: '14:00',
-          checkOutTime: '12:00',
-          active: true,
-          order: 7,
-          availableFor: ['all'],
-          isFixedPrice: true,
-          isFeedbackPeriod: true
+          id: 'pernoite',
+          nome: 'Pernoite',
+          tipo: 'pernoite',
+          // ❌ REMOVIDO: duracaoHoras (irrelevante para pernoite)
+          checkIn: '20:00',
+          checkOut: '12:00', 
+          descricao: 'Pernoite - check-in 20h, check-out 12h do dia seguinte',
+          instrucoes: 'Check-in a partir das 20h. Check-out até 12h do dia seguinte.',
+          ordem: 5
         }
       ];
       
-      const periodosInseridos = await this.insertMany(periodsPadrao);
-      console.log(`✅ ${periodosInseridos.length} períodos padrão criados com sucesso`);
-      return periodosInseridos;
+      await this.insertMany(periodsPadrao);
+      console.log('✅ Períodos padrão criados com sucesso');
+      return periodsPadrao;
     } else {
-      console.log(`✅ ${count} períodos já existem no banco`);
+      console.log('✅ Períodos já existem');
       return await this.findAtivos();
     }
   } catch (error) {
@@ -316,62 +223,9 @@ periodSchema.statics.criarPeriodosPadrao = async function() {
   }
 };
 
-// ✅ MÉTODO PARA ATIVAR/DESATIVAR PERÍODO
-periodSchema.statics.alterarStatus = async function(periodType, ativo) {
-  try {
-    const resultado = await this.findOneAndUpdate(
-      { periodType: periodType },
-      { active: ativo, updatedAt: new Date() },
-      { new: true }
-    );
-    
-    if (resultado) {
-      console.log(`✅ Período ${periodType} → ${ativo ? 'ATIVADO' : 'DESATIVADO'}`);
-      return resultado;
-    } else {
-      console.error(`❌ Período ${periodType} não encontrado`);
-      return null;
-    }
-  } catch (error) {
-    console.error('❌ Erro ao alterar status do período:', error);
-    return null;
-  }
-};
-
-// ✅ MÉTODO PARA DEBUG
-periodSchema.statics.debugPeriodos = async function() {
-  try {
-    const todosPeriodos = await this.find({});
-    const periodosAtivos = await this.find({ active: true });
-    
-    console.log('🔍 === DEBUG PERÍODOS ===');
-    console.log(`📊 Total no banco: ${todosPeriodos.length}`);
-    console.log(`📊 Ativos: ${periodosAtivos.length}`);
-    
-    todosPeriodos.forEach(p => {
-      console.log(`📋 ${p.periodType} → ${p.periodName} | R$ ${p.basePrice} | Ativo: ${p.active}`);
-    });
-    
-    return {
-      total: todosPeriodos.length,
-      ativos: periodosAtivos.length,
-      todos: todosPeriodos,
-      apenasAtivos: periodosAtivos
-    };
-  } catch (error) {
-    console.error('❌ Erro no debug:', error);
-    return { error: error.message };
-  }
-};
-
-// ✅ ÍNDICES PARA PERFORMANCE
-periodSchema.index({ periodType: 1 }, { unique: true });
-periodSchema.index({ active: 1, order: 1 });
-periodSchema.index({ category: 1, active: 1 });
-
-// ✅ MIDDLEWARE POST-SAVE PARA LOG
-periodSchema.post('save', function(doc) {
-  console.log(`✅ Período salvo: ${doc.periodType} → ${doc.periodName} | R$ ${doc.basePrice} | Ativo: ${doc.active}`);
-});
+// ✅ ÍNDICES
+periodSchema.index({ id: 1 }, { unique: true });
+periodSchema.index({ ativo: 1, ordem: 1 });
+periodSchema.index({ tipo: 1 });
 
 module.exports = mongoose.models.Period || mongoose.model('Period', periodSchema);
