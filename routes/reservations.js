@@ -1,13 +1,82 @@
-// routes/reservations.js - VERSÃO COMPLETA COM SISTEMA DE CONFLITOS + ROTAS DEBUG
+// routes/reservations.js - VERSÃO COMPLETA COM SISTEMA DE CONFLITOS + DADOS DINÂMICOS DO MONGODB
 
 const express = require('express');
 const router = express.Router();
 const mongoose = require('mongoose');
 const Reservation = require('../models/Reservation');
 const Room = require('../models/Room');
+const Period = require('../models/Period'); // ✅ IMPORTAR MODELO DE PERÍODOS
 const { authenticate } = require('../middleware/auth');
 
 console.log('✅ Modelo Reservation importado com sucesso');
+
+// ✅ FUNÇÃO PARA BUSCAR PERÍODOS DO MONGODB - DINÂMICO
+const buscarPeriodosDoMongo = async () => {
+  try {
+    console.log('📊 Buscando períodos ativos do MongoDB...');
+    
+    // Buscar apenas períodos ativos
+    const periodos = await Period.find({ 
+      active: true,
+      isActive: { $ne: false } // Garantir que não seja false
+    }).sort({ order: 1 });
+    
+    console.log(`✅ ${periodos.length} períodos encontrados no MongoDB`);
+    
+    // Criar mapeamentos dinâmicos
+    const periodNameMap = {};
+    const priceMap = {};
+    const enumValidos = [];
+    
+    periodos.forEach(periodo => {
+      const tipo = periodo.periodType;
+      const nome = periodo.periodName;
+      const preco = periodo.basePrice || 50;
+      
+      periodNameMap[tipo] = nome;
+      priceMap[tipo] = preco;
+      enumValidos.push(tipo);
+      
+      console.log(`📋 Período mapeado: ${tipo} → ${nome} (R$ ${preco})`);
+    });
+    
+    return {
+      periodNameMap,
+      priceMap,
+      enumValidos,
+      periodos
+    };
+    
+  } catch (error) {
+    console.error('❌ Erro ao buscar períodos do MongoDB:', error);
+    
+    // ✅ FALLBACK: Se falhar, usar valores padrão
+    return {
+      periodNameMap: {
+        '3h': '3 HORAS',
+        '4h': '4 HORAS',
+        '6h': '6 HORAS',
+        '12h': '12 HORAS',
+        '1hora': '1 HORA',
+        'daily': 'DIÁRIA',
+        'pernoite': 'PERNOITE',
+        'dayuse': 'DAYUSE'
+      },
+      priceMap: {
+        '3h': 50.00,
+        '4h': 55.00,
+        '6h': 70.00,
+        '12h': 90.00,
+        '1hora': 50.00,
+        'daily': 120.00,
+        'pernoite': 100.00,
+        'dayuse': 50.00
+      },
+      enumValidos: ['3h', '4h', '6h', '12h', '1hora', 'daily', 'pernoite', 'dayuse'],
+      periodos: []
+    };
+  }
+};
 
 // ✅ FUNÇÃO PARA DETECTAR TURNO ATUAL
 const detectarTurnoAtual = (user) => {
@@ -299,10 +368,13 @@ const atualizarStatusQuarto = async (roomId, status) => {
   }
 };
 
-// ✅ ROTA 1: LISTAR RESERVAS
+// ✅ ROTA 1: LISTAR RESERVAS - COM NOMES DINÂMICOS
 router.get('/', authenticate, async (req, res) => {
   try {
     console.log('📋 [GET] Listando reservas...');
+    
+    // ✅ BUSCAR PERÍODOS PARA MAPEAMENTO DINÂMICO
+    const { periodNameMap } = await buscarPeriodosDoMongo();
     
     const reservations = await Reservation.find()
       .sort({ createdAt: -1 })
@@ -311,39 +383,47 @@ router.get('/', authenticate, async (req, res) => {
 
     console.log(`📋 Encontradas ${reservations.length} reservas`);
 
-    const formattedReservations = reservations.map(reservation => ({
-      _id: reservation._id || '',
-      reservationNumber: reservation.reservationNumber || 'N/A',
+    const formattedReservations = reservations.map(reservation => {
+      // ✅ USAR NOME DINÂMICO OU FALLBACK
+      const periodoNome = periodNameMap[reservation.periodType] || 
+                          reservation.periodName || 
+                          reservation.periodType || 
+                          'Período não definido';
       
-      customer: {
-        name: reservation.customerName || 'Cliente não informado',
-        phone: reservation.customerPhone || '',
-        email: reservation.customerEmail || ''
-      },
-      room: {
-        id: reservation.roomId || 'room-default',
-        number: reservation.roomNumber || '101'
-      },
-      checkIn: reservation.checkIn || new Date(),
-      checkOut: reservation.checkOut || new Date(),
-      periodType: reservation.periodType || '4h',
-      pricing: {
-        basePrice: reservation.basePrice || 50.00,
-        totalPrice: reservation.totalPrice || 50.00
-      },
-      status: reservation.status || 'confirmed',
-      paymentMethod: reservation.paymentMethod || 'cash',
-      createdAt: reservation.createdAt || new Date(),
-      
-      // ✅ COMPATIBILIDADE COM FRONTEND ANTIGO
-      cliente: {
-        nome: reservation.customerName || 'Cliente não informado',
-        telefone: reservation.customerPhone || ''
-      },
-      data: reservation.checkIn ? new Date(reservation.checkIn).toLocaleDateString('pt-BR') : 'N/A',
-      periodo: reservation.periodName || '4 HORAS',
-      valor: (reservation.totalPrice || 50.00).toFixed(2)
-    }));
+      return {
+        _id: reservation._id || '',
+        reservationNumber: reservation.reservationNumber || 'N/A',
+        
+        customer: {
+          name: reservation.customerName || 'Cliente não informado',
+          phone: reservation.customerPhone || '',
+          email: reservation.customerEmail || ''
+        },
+        room: {
+          id: reservation.roomId || 'room-default',
+          number: reservation.roomNumber || '101'
+        },
+        checkIn: reservation.checkIn || new Date(),
+        checkOut: reservation.checkOut || new Date(),
+        periodType: reservation.periodType || '4h',
+        pricing: {
+          basePrice: reservation.basePrice || 50.00,
+          totalPrice: reservation.totalPrice || 50.00
+        },
+        status: reservation.status || 'confirmed',
+        paymentMethod: reservation.paymentMethod || 'cash',
+        createdAt: reservation.createdAt || new Date(),
+        
+        // ✅ COMPATIBILIDADE COM FRONTEND (USANDO NOMES DINÂMICOS)
+        cliente: {
+          nome: reservation.customerName || 'Cliente não informado',
+          telefone: reservation.customerPhone || ''
+        },
+        data: reservation.checkIn ? new Date(reservation.checkIn).toLocaleDateString('pt-BR') : 'N/A',
+        periodo: periodoNome, // ✅ NOME DINÂMICO DO MONGODB
+        valor: (reservation.totalPrice || 50.00).toFixed(2)
+      };
+    });
 
     res.json({
       success: true,
@@ -361,23 +441,26 @@ router.get('/', authenticate, async (req, res) => {
   }
 });
 
-// ✅ ROTA 2: CRIAR RESERVA - COM SISTEMA DE CONFLITOS
+// ✅ ROTA 2: CRIAR RESERVA - COM DADOS DINÂMICOS DO MONGODB + SISTEMA DE CONFLITOS
 router.post('/', authenticate, async (req, res) => {
   try {
     console.log('🆕 [POST] Criando nova reserva...');
-    console.log('📦 Body completo:', JSON.stringify(req.body, null, 2));
+    
+    // ✅ BUSCAR DADOS DINÂMICOS DO MONGODB
+    const { periodNameMap, priceMap, enumValidos } = await buscarPeriodosDoMongo();
+    
+    console.log('🔍 Dados dinâmicos carregados:', {
+      tiposDisponiveis: enumValidos,
+      totalPeriodos: Object.keys(periodNameMap).length
+    });
 
-    // ✅ EXTRAIR TODOS OS DADOS DO CLIENTE DIRETAMENTE DO BODY
     const {
-      // Dados obrigatórios
       checkIn,
       checkOut,
       periodType = '4h',
       roomId,
       totalPrice,
       paymentMethod = 'Dinheiro',
-      
-      // 🚨 DADOS DO CLIENTE - CAPTURAR DIRETAMENTE
       customerName,
       customerPhone,
       customerEmail, 
@@ -385,12 +468,25 @@ router.post('/', authenticate, async (req, res) => {
       customerId
     } = req.body;
 
-    console.log('🔍 === DADOS EXTRAÍDOS DO BODY ===');
-    console.log('👤 customerName:', customerName);
-    console.log('📞 customerPhone:', customerPhone);
-    console.log('📧 customerEmail:', customerEmail);
-    console.log('📄 customerDocument:', customerDocument);
-    console.log('🆔 customerId:', customerId);
+    console.log('🔍 === VALIDAÇÃO DINÂMICA ===');
+    console.log('📝 Período recebido:', periodType);
+    console.log('✅ Períodos válidos do MongoDB:', enumValidos);
+    console.log('✅ Período é válido:', enumValidos.includes(periodType));
+
+    // ✅ VALIDAÇÃO DINÂMICA BASEADA NO MONGODB
+    if (!enumValidos.includes(periodType)) {
+      console.error('❌ Período não encontrado no MongoDB:', periodType);
+      return res.status(400).json({
+        success: false,
+        message: `Tipo de período '${periodType}' não está ativo no sistema`,
+        periodosDisponiveis: enumValidos,
+        periodosNomes: Object.keys(periodNameMap).map(tipo => ({
+          tipo,
+          nome: periodNameMap[tipo],
+          preco: priceMap[tipo]
+        }))
+      });
+    }
 
     // ✅ VALIDAÇÕES BÁSICAS
     if (!checkIn || !checkOut) {
@@ -491,33 +587,13 @@ router.post('/', authenticate, async (req, res) => {
       console.log('✅ Nenhum conflito detectado para este quarto');
     }
 
-    // ✅ MAPEAMENTO COMPLETO
-const periodNameMap = {
-  '3h': '3 HORAS',
-  '4h': '4 HORAS',
-  '6h': '6 HORAS', 
-  '12h': '12 HORAS',
-  '1hora': '1 HORA',        // ✅ ADICIONADO
-  'daily': 'DIÁRIA',
-  'pernoite': 'PERNOITE',
-  'dayuse': 'DAYUSE'        // ✅ ADICIONADO
-};
-
-const priceMap = {
-  '3h': 50.00,
-  '4h': 55.00,
-  '6h': 70.00,
-  '12h': 90.00,
-  '1hora': 50.00,           // ✅ ADICIONADO
-  'daily': 120.00,
-  'pernoite': 100.00,
-  'dayuse': 50.00           // ✅ ADICIONADO
-};
-
-    // ✅ CALCULAR PREÇO FINAL
+    // ✅ USAR PREÇO DINÂMICO DO MONGODB
     let finalPrice = parseFloat(totalPrice) || priceMap[periodType] || 50.00;
     
-    console.log('💰 Preço final calculado:', finalPrice);
+    console.log('💰 === PREÇO DINÂMICO ===');
+    console.log('💰 Preço enviado pelo frontend:', totalPrice);
+    console.log('💰 Preço do MongoDB para', periodType, ':', priceMap[periodType]);
+    console.log('💰 Preço final usado:', finalPrice);
 
     // ✅ MAPEAR PAGAMENTO
     const paymentMethodMap = {
@@ -529,7 +605,7 @@ const priceMap = {
 
     const finalPaymentMethod = paymentMethodMap[paymentMethod] || 'cash';
 
-    // ✅ PROCESSAR NOME DO CLIENTE - GARANTIR QUE NÃO SEJA VAZIO
+    // ✅ PROCESSAR NOME DO CLIENTE
     let finalCustomerName = 'Cliente não informado';
     
     if (customerName && typeof customerName === 'string' && customerName.trim() !== '') {
@@ -542,9 +618,14 @@ const priceMap = {
     // ✅ DETECTAR TURNO AUTOMATICAMENTE
     const turnoAtual = detectarTurnoAtual(req.user);
 
-    // ✅ DADOS SEGUROS PARA SALVAR
+    // ✅ USAR NOME DINÂMICO DO MONGODB
+    const periodName = periodNameMap[periodType] || periodType;
+    
+    console.log('📛 === NOME DINÂMICO ===');
+    console.log('📛 Nome do MongoDB para', periodType, ':', periodName);
+
+    // ✅ DADOS PARA SALVAR (USANDO VALORES DINÂMICOS DO MONGODB)
     const reservationData = {
-      // 🚨 DADOS DO CLIENTE - USAR OS VALORES CORRETOS
       customerName: finalCustomerName,
       customerPhone: (customerPhone && typeof customerPhone === 'string') ? customerPhone.trim() : '',
       customerEmail: (customerEmail && typeof customerEmail === 'string') ? customerEmail.trim() : '',
@@ -556,11 +637,11 @@ const priceMap = {
       checkIn: checkInDate,
       checkOut: checkOutDate,
       
-      periodType: periodType,
-      periodName: periodNameMap[periodType] || '4 HORAS',
+      periodType: periodType,           // ✅ Tipo validado dinamicamente
+      periodName: periodName,           // ✅ Nome dinâmico do MongoDB
       
-      basePrice: finalPrice,
-      totalPrice: finalPrice,
+      basePrice: finalPrice,            // ✅ Preço dinâmico do MongoDB
+      totalPrice: finalPrice,           // ✅ Preço dinâmico do MongoDB
       
       status: 'confirmed',
       paymentMethod: finalPaymentMethod,
@@ -572,10 +653,12 @@ const priceMap = {
       turnoInfo: turnoAtual
     };
 
-    console.log('💾 === DADOS FINAIS PARA SALVAR ===');
+    console.log('💾 === DADOS FINAIS (DINÂMICOS) ===');
     console.log('👤 Nome:', reservationData.customerName);
     console.log('📞 Telefone:', reservationData.customerPhone);
     console.log('📧 Email:', reservationData.customerEmail);
+    console.log('🕐 Período:', reservationData.periodType);
+    console.log('📛 Nome período:', reservationData.periodName);
     console.log('💰 Preço:', reservationData.totalPrice);
 
     // ✅ CRIAR E SALVAR RESERVA
@@ -583,17 +666,15 @@ const priceMap = {
     const savedReservation = await reservation.save();
 
     console.log('✅ Reserva salva com sucesso:', savedReservation.reservationNumber);
-    console.log('👤 Nome salvo:', savedReservation.customerName);
-    console.log('📞 Telefone salvo:', savedReservation.customerPhone);
 
-    // ✅ GESTÃO INTELIGENTE DO QUARTO - SÓ BLOQUEIA SE NECESSÁRIO
+    // ✅ GESTÃO INTELIGENTE DO QUARTO
     await gerenciarStatusQuarto(room.id, 'criar_reserva', {
       checkInDate: checkInDate,
       checkOutDate: checkOutDate,
       status: 'confirmed'
     });
 
-    // ✅ RESPOSTA DE SUCESSO (com info de substituição se aplicável)
+    // ✅ RESPOSTA DE SUCESSO
     const responseData = {
       success: true,
       message: 'Reserva criada com sucesso',
@@ -638,6 +719,38 @@ const priceMap = {
     res.status(500).json({
       success: false,
       message: 'Erro interno do servidor',
+      error: error.message
+    });
+  }
+});
+
+// ✅ NOVA ROTA PARA VALIDAR PERÍODOS DINAMICAMENTE - DEBUG
+router.get('/debug/periodos-mongodb', authenticate, async (req, res) => {
+  try {
+    const { periodNameMap, priceMap, enumValidos, periodos } = await buscarPeriodosDoMongo();
+    
+    res.json({
+      success: true,
+      data: {
+        totalPeriodos: periodos.length,
+        periodosAtivos: enumValidos,
+        mapeamentoNomes: periodNameMap,
+        mapeamentoPrecos: priceMap,
+        periodosCompletos: periodos.map(p => ({
+          id: p._id,
+          tipo: p.periodType,
+          nome: p.periodName,
+          preco: p.basePrice,
+          ativo: p.active,
+          ordem: p.order
+        }))
+      }
+    });
+    
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Erro ao buscar períodos',
       error: error.message
     });
   }
@@ -1000,6 +1113,9 @@ router.post('/debug/criar-turno-teste', authenticate, async (req, res) => {
   try {
     console.log('🧪 [DEBUG] Criando reserva de teste para turno...');
     
+    // ✅ BUSCAR DADOS DINÂMICOS PARA TESTE
+    const { periodNameMap, priceMap } = await buscarPeriodosDoMongo();
+    
     // Detectar turno atual
     const turnoAtual = detectarTurnoAtual(req.user);
     
@@ -1019,9 +1135,9 @@ router.post('/debug/criar-turno-teste', authenticate, async (req, res) => {
       checkIn: agora,
       checkOut: checkOut,
       periodType: '4h',
-      periodName: '4 HORAS',
-      basePrice: 55.00,
-      totalPrice: 55.00,
+      periodName: periodNameMap['4h'] || '4 HORAS', // ✅ USAR NOME DINÂMICO
+      basePrice: priceMap['4h'] || 55.00,           // ✅ USAR PREÇO DINÂMICO
+      totalPrice: priceMap['4h'] || 55.00,          // ✅ USAR PREÇO DINÂMICO
       status: 'confirmed',
       paymentMethod: 'cash',
       paymentStatus: 'paid',
@@ -1041,9 +1157,14 @@ router.post('/debug/criar-turno-teste', authenticate, async (req, res) => {
           number: reservaSalva.reservationNumber,
           customer: reservaSalva.customerName,
           turnoInfo: reservaSalva.turnoInfo,
-          valor: reservaSalva.totalPrice
+          valor: reservaSalva.totalPrice,
+          periodName: reservaSalva.periodName
         },
-        turnoDetectado: turnoAtual
+        turnoDetectado: turnoAtual,
+        dadosMongoUsados: {
+          nomePeriodo: periodNameMap['4h'],
+          precoPeriodo: priceMap['4h']
+        }
       }
     });
     
