@@ -491,25 +491,28 @@ router.post('/', authenticate, async (req, res) => {
       console.log('✅ Nenhum conflito detectado para este quarto');
     }
 
-    // ✅ MAPEAR PERÍODO PARA NOME
-    const periodNameMap = {
-      '3h': '3 HORAS',
-      '4h': '4 HORAS',
-      '6h': '6 HORAS', 
-      '12h': '12 HORAS',
-      'daily': 'DIÁRIA',
-      'pernoite': 'PERNOITE'
-    };
+    // ✅ MAPEAMENTO COMPLETO
+const periodNameMap = {
+  '3h': '3 HORAS',
+  '4h': '4 HORAS',
+  '6h': '6 HORAS', 
+  '12h': '12 HORAS',
+  '1hora': '1 HORA',        // ✅ ADICIONADO
+  'daily': 'DIÁRIA',
+  'pernoite': 'PERNOITE',
+  'dayuse': 'DAYUSE'        // ✅ ADICIONADO
+};
 
-    // ✅ MAPEAR PREÇOS BASE
-    const priceMap = {
-      '3h': 50.00,
-      '4h': 55.00,
-      '6h': 70.00,
-      '12h': 90.00,
-      'daily': 150.00,
-      'pernoite': 120.00
-    };
+const priceMap = {
+  '3h': 50.00,
+  '4h': 55.00,
+  '6h': 70.00,
+  '12h': 90.00,
+  '1hora': 50.00,           // ✅ ADICIONADO
+  'daily': 120.00,
+  'pernoite': 100.00,
+  'dayuse': 50.00           // ✅ ADICIONADO
+};
 
     // ✅ CALCULAR PREÇO FINAL
     let finalPrice = parseFloat(totalPrice) || priceMap[periodType] || 50.00;
