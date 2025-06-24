@@ -1,4 +1,4 @@
-// routes/reservations.js - VERSÃO COM CORREÇÕES MÍNIMAS (LÓGICA ORIGINAL MANTIDA)
+// routes/reservations.js - VERSÃO COMPLETA COM SISTEMA DE CONFLITOS + DADOS DINÂMICOS DO MONGODB
 
 const express = require('express');
 const router = express.Router();
@@ -10,42 +10,28 @@ const { authenticate } = require('../middleware/auth');
 
 console.log('✅ Modelo Reservation importado com sucesso');
 
-// ✅ FUNÇÃO CORRIGIDA - BUSCA REAL DO MONGODB (MANTENDO LÓGICA ORIGINAL)
+// ✅ FUNÇÃO PARA BUSCAR PERÍODOS DO MONGODB - DINÂMICO
 const buscarPeriodosDoMongo = async () => {
   try {
     console.log('📊 Buscando períodos ativos do MongoDB...');
     
-    // ✅ BUSCAR PERÍODOS ATIVOS DO MONGODB (CAMPOS CORRETOS)
+    // Buscar apenas períodos ativos
     const periodos = await Period.find({ 
-      active: true  // ✅ Campo correto conforme MongoDB
+      active: true,
+      isActive: { $ne: false } // Garantir que não seja false
     }).sort({ order: 1 });
     
     console.log(`✅ ${periodos.length} períodos encontrados no MongoDB`);
     
-    // ✅ DEBUG: Se não encontrou nenhum, investigar
-    if (periodos.length === 0) {
-      console.warn('⚠️ Nenhum período ativo encontrado! Verificando...');
-      const totalPeriodos = await Period.countDocuments();
-      console.log(`📊 Total de períodos no banco: ${totalPeriodos}`);
-      
-      if (totalPeriodos > 0) {
-        console.log('📋 Listando TODOS os períodos para debug...');
-        const todosPeriodos = await Period.find({}).limit(10);
-        todosPeriodos.forEach(p => {
-          console.log(`🔍 ${p.periodType} | ${p.periodName} | R$ ${p.basePrice} | Ativo: ${p.active}`);
-        });
-      }
-    }
-    
-    // ✅ CRIAR MAPEAMENTOS (MANTENDO ESTRUTURA ORIGINAL)
+    // Criar mapeamentos dinâmicos
     const periodNameMap = {};
     const priceMap = {};
     const enumValidos = [];
     
     periodos.forEach(periodo => {
-      const tipo = periodo.periodType;        // ✅ Campo correto
-      const nome = periodo.periodName;        // ✅ Campo correto  
-      const preco = periodo.basePrice || 50;  // ✅ Campo correto
+      const tipo = periodo.periodType;
+      const nome = periodo.periodName;
+      const preco = periodo.basePrice || 50;
       
       periodNameMap[tipo] = nome;
       priceMap[tipo] = preco;
@@ -64,27 +50,27 @@ const buscarPeriodosDoMongo = async () => {
   } catch (error) {
     console.error('❌ Erro ao buscar períodos do MongoDB:', error);
     
-    // ✅ FALLBACK MANTIDO (INCLUINDO SEUS PERÍODOS ESPECÍFICOS)
+    // ✅ FALLBACK: Se falhar, usar valores padrão
     return {
       periodNameMap: {
         '3h': '3 HORAS',
         '4h': '4 HORAS',
         '6h': '6 HORAS',
         '12h': '12 HORAS',
-        '1hora': '1 HORA',      // ✅ INCLUÍDO
+        '1hora': '1 HORA',
         'daily': 'DIÁRIA',
         'pernoite': 'PERNOITE',
-        'dayuse': 'DAYUSE'      // ✅ INCLUÍDO
+        'dayuse': 'DAYUSE'
       },
       priceMap: {
         '3h': 50.00,
         '4h': 55.00,
         '6h': 70.00,
         '12h': 90.00,
-        '1hora': 50.00,         // ✅ INCLUÍDO
+        '1hora': 50.00,
         'daily': 120.00,
         'pernoite': 100.00,
-        'dayuse': 50.00         // ✅ INCLUÍDO
+        'dayuse': 50.00
       },
       enumValidos: ['3h', '4h', '6h', '12h', '1hora', 'daily', 'pernoite', 'dayuse'],
       periodos: []
@@ -92,7 +78,7 @@ const buscarPeriodosDoMongo = async () => {
   }
 };
 
-// ✅ FUNÇÃO PARA DETECTAR TURNO ATUAL (MANTIDA ORIGINAL)
+// ✅ FUNÇÃO PARA DETECTAR TURNO ATUAL
 const detectarTurnoAtual = (user) => {
   const agora = new Date();
   const hora = agora.getHours();
@@ -118,7 +104,7 @@ const detectarTurnoAtual = (user) => {
   };
 };
 
-// ✅ FUNÇÃO PARA BUSCAR QUARTO DISPONÍVEL (MANTIDA ORIGINAL)
+// ✅ FUNÇÃO PARA BUSCAR QUARTO DISPONÍVEL
 const buscarQuartoDisponivel = async () => {
   try {
     const availableRoom = await Room.findOne({ 
@@ -146,7 +132,7 @@ const buscarQuartoDisponivel = async () => {
   };
 };
 
-// 🔍 SISTEMA DE VERIFICAÇÃO DE CONFLITOS (MANTIDO ORIGINAL)
+// 🔍 SISTEMA DE VERIFICAÇÃO DE CONFLITOS
 const verificarConflitoReservas = async (roomId, checkInDate, checkOutDate, excludeReservationId = null) => {
   try {
     console.log('🔍 === VERIFICANDO CONFLITOS ===');
@@ -224,7 +210,7 @@ const verificarConflitoReservas = async (roomId, checkInDate, checkOutDate, excl
   }
 };
 
-// ✅ FUNÇÃO PARA SUGERIR QUARTOS ALTERNATIVOS (MANTIDA ORIGINAL)
+// ✅ FUNÇÃO PARA SUGERIR QUARTOS ALTERNATIVOS
 const sugerirQuartosAlternativos = async (checkInDate, checkOutDate, roomTypeOriginal = null) => {
   try {
     console.log('🔍 Buscando quartos alternativos...');
@@ -264,7 +250,7 @@ const sugerirQuartosAlternativos = async (checkInDate, checkOutDate, roomTypeOri
   }
 };
 
-// ✅ FUNÇÃO PARA FORMATAR MENSAGEM DE CONFLITO (MANTIDA ORIGINAL)
+// ✅ FUNÇÃO PARA FORMATAR MENSAGEM DE CONFLITO
 const formatarMensagemConflito = (conflitos) => {
   if (conflitos.length === 0) return '';
   
@@ -280,7 +266,7 @@ const formatarMensagemConflito = (conflitos) => {
   return mensagem;
 };
 
-// ✅ VERIFICAR SE QUARTO DEVE SER BLOQUEADO (MANTIDA ORIGINAL)
+// ✅ VERIFICAR SE QUARTO DEVE SER BLOQUEADO
 const shouldBlockRoom = (checkInDate, checkOutDate) => {
   const now = new Date();
   const checkIn = new Date(checkInDate);
@@ -310,7 +296,7 @@ const shouldBlockRoom = (checkInDate, checkOutDate) => {
   return shouldBlock;
 };
 
-// ✅ FUNÇÃO PRINCIPAL DE GESTÃO DE QUARTO (MANTIDA ORIGINAL)
+// ✅ FUNÇÃO PRINCIPAL DE GESTÃO DE QUARTO
 const gerenciarStatusQuarto = async (roomId, operacao, dadosReserva = {}) => {
   try {
     if (!roomId || roomId === 'room-default') return;
@@ -364,7 +350,7 @@ const gerenciarStatusQuarto = async (roomId, operacao, dadosReserva = {}) => {
   }
 };
 
-// ✅ FUNÇÃO LEGACY PARA COMPATIBILIDADE (MANTIDA ORIGINAL)
+// ✅ FUNÇÃO LEGACY PARA COMPATIBILIDADE
 const atualizarStatusQuarto = async (roomId, status) => {
   try {
     if (roomId && roomId !== 'room-default') {
@@ -382,12 +368,12 @@ const atualizarStatusQuarto = async (roomId, status) => {
   }
 };
 
-// ✅ ROTA 1: LISTAR RESERVAS - COM NOMES DO MONGODB (MANTIDA LÓGICA ORIGINAL)
+// ✅ ROTA 1: LISTAR RESERVAS - COM NOMES DINÂMICOS
 router.get('/', authenticate, async (req, res) => {
   try {
     console.log('📋 [GET] Listando reservas...');
     
-    // ✅ BUSCAR PERÍODOS PARA MAPEAMENTO (SÓ CORREÇÃO AQUI)
+    // ✅ BUSCAR PERÍODOS PARA MAPEAMENTO DINÂMICO
     const { periodNameMap } = await buscarPeriodosDoMongo();
     
     const reservations = await Reservation.find()
@@ -398,7 +384,7 @@ router.get('/', authenticate, async (req, res) => {
     console.log(`📋 Encontradas ${reservations.length} reservas`);
 
     const formattedReservations = reservations.map(reservation => {
-      // ✅ USAR NOME DO MONGODB OU FALLBACK (SEM MUDAR LÓGICA)
+      // ✅ USAR NOME DINÂMICO OU FALLBACK
       const periodoNome = periodNameMap[reservation.periodType] || 
                           reservation.periodName || 
                           reservation.periodType || 
@@ -428,13 +414,13 @@ router.get('/', authenticate, async (req, res) => {
         paymentMethod: reservation.paymentMethod || 'cash',
         createdAt: reservation.createdAt || new Date(),
         
-        // ✅ COMPATIBILIDADE COM FRONTEND (USANDO NOMES DO MONGODB)
+        // ✅ COMPATIBILIDADE COM FRONTEND (USANDO NOMES DINÂMICOS)
         cliente: {
           nome: reservation.customerName || 'Cliente não informado',
           telefone: reservation.customerPhone || ''
         },
         data: reservation.checkIn ? new Date(reservation.checkIn).toLocaleDateString('pt-BR') : 'N/A',
-        periodo: periodoNome, // ✅ NOME DO MONGODB
+        periodo: periodoNome, // ✅ NOME DINÂMICO DO MONGODB
         valor: (reservation.totalPrice || 50.00).toFixed(2)
       };
     });
@@ -455,15 +441,15 @@ router.get('/', authenticate, async (req, res) => {
   }
 });
 
-// ✅ ROTA 2: CRIAR RESERVA - APENAS CORREÇÃO DA BUSCA NO MONGODB (LÓGICA MANTIDA)
+// ✅ ROTA 2: CRIAR RESERVA - COM DADOS DINÂMICOS DO MONGODB + SISTEMA DE CONFLITOS
 router.post('/', authenticate, async (req, res) => {
   try {
     console.log('🆕 [POST] Criando nova reserva...');
     
-    // ✅ ÚNICA ALTERAÇÃO: BUSCAR DADOS DO MONGODB REAL
+    // ✅ BUSCAR DADOS DINÂMICOS DO MONGODB
     const { periodNameMap, priceMap, enumValidos } = await buscarPeriodosDoMongo();
     
-    console.log('🔍 Dados do MongoDB carregados:', {
+    console.log('🔍 Dados dinâmicos carregados:', {
       tiposDisponiveis: enumValidos,
       totalPeriodos: Object.keys(periodNameMap).length
     });
@@ -482,12 +468,12 @@ router.post('/', authenticate, async (req, res) => {
       customerId
     } = req.body;
 
-    console.log('🔍 === VALIDAÇÃO COM DADOS DO MONGODB ===');
+    console.log('🔍 === VALIDAÇÃO DINÂMICA ===');
     console.log('📝 Período recebido:', periodType);
     console.log('✅ Períodos válidos do MongoDB:', enumValidos);
     console.log('✅ Período é válido:', enumValidos.includes(periodType));
 
-    // ✅ VALIDAÇÃO USANDO DADOS REAIS DO MONGODB (SÓ ISSO MUDOU)
+    // ✅ VALIDAÇÃO DINÂMICA BASEADA NO MONGODB
     if (!enumValidos.includes(periodType)) {
       console.error('❌ Período não encontrado no MongoDB:', periodType);
       return res.status(400).json({
@@ -502,9 +488,7 @@ router.post('/', authenticate, async (req, res) => {
       });
     }
 
-    // ✅ RESTO DA LÓGICA MANTIDA EXATAMENTE IGUAL...
-
-    // Validações básicas (MANTIDAS)
+    // ✅ VALIDAÇÕES BÁSICAS
     if (!checkIn || !checkOut) {
       console.log('❌ Datas obrigatórias ausentes');
       return res.status(400).json({
@@ -513,7 +497,7 @@ router.post('/', authenticate, async (req, res) => {
       });
     }
 
-    // Validar e converter datas (MANTIDAS)
+    // ✅ VALIDAR E CONVERTER DATAS
     let checkInDate, checkOutDate;
     try {
       checkInDate = new Date(checkIn);
@@ -530,7 +514,7 @@ router.post('/', authenticate, async (req, res) => {
       });
     }
 
-    // Buscar quarto disponível (MANTIDO)
+    // ✅ BUSCAR QUARTO DISPONÍVEL
     let room;
     if (roomId) {
       try {
@@ -551,7 +535,7 @@ router.post('/', authenticate, async (req, res) => {
       room = await buscarQuartoDisponivel();
     }
 
-    // Verificar conflitos de reserva (MANTIDO)
+    // 🔍 VERIFICAR CONFLITOS DE RESERVA
     console.log('🔍 Verificando conflitos para o quarto selecionado...');
     const conflictoCheck = await verificarConflitoReservas(
       room.id, 
@@ -603,15 +587,15 @@ router.post('/', authenticate, async (req, res) => {
       console.log('✅ Nenhum conflito detectado para este quarto');
     }
 
-    // ✅ USAR PREÇO DO MONGODB (SÓ ISSO MUDOU)
+    // ✅ USAR PREÇO DINÂMICO DO MONGODB
     let finalPrice = parseFloat(totalPrice) || priceMap[periodType] || 50.00;
     
-    console.log('💰 === PREÇO DO MONGODB ===');
+    console.log('💰 === PREÇO DINÂMICO ===');
     console.log('💰 Preço enviado pelo frontend:', totalPrice);
     console.log('💰 Preço do MongoDB para', periodType, ':', priceMap[periodType]);
     console.log('💰 Preço final usado:', finalPrice);
 
-    // Mapear pagamento (MANTIDO)
+    // ✅ MAPEAR PAGAMENTO
     const paymentMethodMap = {
       'Dinheiro': 'cash',
       'Cartão': 'card', 
@@ -621,7 +605,7 @@ router.post('/', authenticate, async (req, res) => {
 
     const finalPaymentMethod = paymentMethodMap[paymentMethod] || 'cash';
 
-    // Processar nome do cliente (MANTIDO)
+    // ✅ PROCESSAR NOME DO CLIENTE
     let finalCustomerName = 'Cliente não informado';
     
     if (customerName && typeof customerName === 'string' && customerName.trim() !== '') {
@@ -631,16 +615,16 @@ router.post('/', authenticate, async (req, res) => {
       console.log('⚠️ Nome do cliente não fornecido ou inválido, usando padrão');
     }
 
-    // Detectar turno automaticamente (MANTIDO)
+    // ✅ DETECTAR TURNO AUTOMATICAMENTE
     const turnoAtual = detectarTurnoAtual(req.user);
 
-    // ✅ USAR NOME DO MONGODB (SÓ ISSO MUDOU)
+    // ✅ USAR NOME DINÂMICO DO MONGODB
     const periodName = periodNameMap[periodType] || periodType;
     
-    console.log('📛 === NOME DO MONGODB ===');
+    console.log('📛 === NOME DINÂMICO ===');
     console.log('📛 Nome do MongoDB para', periodType, ':', periodName);
 
-    // Dados para salvar (MANTIDO - usando valores do MongoDB)
+    // ✅ DADOS PARA SALVAR (USANDO VALORES DINÂMICOS DO MONGODB)
     const reservationData = {
       customerName: finalCustomerName,
       customerPhone: (customerPhone && typeof customerPhone === 'string') ? customerPhone.trim() : '',
@@ -653,11 +637,11 @@ router.post('/', authenticate, async (req, res) => {
       checkIn: checkInDate,
       checkOut: checkOutDate,
       
-      periodType: periodType,           // ✅ Tipo validado
-      periodName: periodName,           // ✅ Nome do MongoDB
+      periodType: periodType,           // ✅ Tipo validado dinamicamente
+      periodName: periodName,           // ✅ Nome dinâmico do MongoDB
       
-      basePrice: finalPrice,            // ✅ Preço do MongoDB
-      totalPrice: finalPrice,           // ✅ Preço do MongoDB
+      basePrice: finalPrice,            // ✅ Preço dinâmico do MongoDB
+      totalPrice: finalPrice,           // ✅ Preço dinâmico do MongoDB
       
       status: 'confirmed',
       paymentMethod: finalPaymentMethod,
@@ -669,27 +653,28 @@ router.post('/', authenticate, async (req, res) => {
       turnoInfo: turnoAtual
     };
 
-    console.log('💾 === DADOS FINAIS (COM MONGODB) ===');
+    console.log('💾 === DADOS FINAIS (DINÂMICOS) ===');
     console.log('👤 Nome:', reservationData.customerName);
     console.log('📞 Telefone:', reservationData.customerPhone);
+    console.log('📧 Email:', reservationData.customerEmail);
     console.log('🕐 Período:', reservationData.periodType);
     console.log('📛 Nome período:', reservationData.periodName);
     console.log('💰 Preço:', reservationData.totalPrice);
 
-    // Criar e salvar reserva (MANTIDO)
+    // ✅ CRIAR E SALVAR RESERVA
     const reservation = new Reservation(reservationData);
     const savedReservation = await reservation.save();
 
     console.log('✅ Reserva salva com sucesso:', savedReservation.reservationNumber);
 
-    // Gestão inteligente do quarto (MANTIDA)
+    // ✅ GESTÃO INTELIGENTE DO QUARTO
     await gerenciarStatusQuarto(room.id, 'criar_reserva', {
       checkInDate: checkInDate,
       checkOutDate: checkOutDate,
       status: 'confirmed'
     });
 
-    // Resposta de sucesso (MANTIDA)
+    // ✅ RESPOSTA DE SUCESSO
     const responseData = {
       success: true,
       message: 'Reserva criada com sucesso',
@@ -723,7 +708,7 @@ router.post('/', authenticate, async (req, res) => {
   } catch (error) {
     console.error('❌ Erro ao criar reserva:', error);
     
-    // Tratar erros específicos (MANTIDO)
+    // ✅ TRATAR ERROS ESPECÍFICOS
     if (error.code === 11000) {
       return res.status(400).json({
         success: false,
@@ -739,7 +724,7 @@ router.post('/', authenticate, async (req, res) => {
   }
 });
 
-// ✅ NOVA ROTA PARA DEBUG DOS PERÍODOS (ADICIONADA)
+// ✅ NOVA ROTA PARA VALIDAR PERÍODOS DINAMICAMENTE - DEBUG
 router.get('/debug/periodos-mongodb', authenticate, async (req, res) => {
   try {
     const { periodNameMap, priceMap, enumValidos, periodos } = await buscarPeriodosDoMongo();
@@ -771,9 +756,7 @@ router.get('/debug/periodos-mongodb', authenticate, async (req, res) => {
   }
 });
 
-// ✅ TODAS AS OUTRAS ROTAS MANTIDAS EXATAMENTE IGUAIS...
-
-// ROTA 3: BUSCAR POR ID (MANTIDA)
+// ✅ ROTA 3: BUSCAR POR ID
 router.get('/:id', authenticate, async (req, res) => {
   try {
     const { id } = req.params;
@@ -807,7 +790,7 @@ router.get('/:id', authenticate, async (req, res) => {
   }
 });
 
-// ROTA 4: ATUALIZAR STATUS (MANTIDA)
+// ✅ ROTA 4: ATUALIZAR STATUS
 router.patch('/:id/status', authenticate, async (req, res) => {
   try {
     const { id } = req.params;
@@ -834,7 +817,7 @@ router.patch('/:id/status', authenticate, async (req, res) => {
       });
     }
 
-    // Gestão inteligente do quarto baseada no status
+    // ✅ GESTÃO INTELIGENTE DO QUARTO BASEADA NO STATUS
     switch (status) {
       case 'checked-in':
         await gerenciarStatusQuarto(reservation.roomId, 'check_in');
@@ -861,7 +844,7 @@ router.patch('/:id/status', authenticate, async (req, res) => {
   }
 });
 
-// ROTA 5: DELETAR (MANTIDA)
+// ✅ ROTA 5: DELETAR
 router.delete('/:id', authenticate, async (req, res) => {
   try {
     const { id } = req.params;
@@ -875,7 +858,7 @@ router.delete('/:id', authenticate, async (req, res) => {
       });
     }
 
-    // Liberar quarto
+    // ✅ LIBERAR QUARTO
     await gerenciarStatusQuarto(reservation.roomId, 'cancelar');
 
     res.json({
@@ -891,7 +874,7 @@ router.delete('/:id', authenticate, async (req, res) => {
   }
 });
 
-// ROTA 6: VERIFICAR CONFLITOS (MANTIDA)
+// ✅ ROTA 6: VERIFICAR CONFLITOS (NOVA ROTA PARA FRONTEND)
 router.post('/check-conflicts', authenticate, async (req, res) => {
   try {
     const { roomId, checkIn, checkOut } = req.body;
@@ -928,7 +911,7 @@ router.post('/check-conflicts', authenticate, async (req, res) => {
   }
 });
 
-// ROTA 7: ESTATÍSTICAS (MANTIDA)
+// ✅ ROTA 7: ESTATÍSTICAS
 router.get('/stats/overview', authenticate, async (req, res) => {
   try {
     const total = await Reservation.countDocuments();
@@ -963,7 +946,7 @@ router.get('/stats/overview', authenticate, async (req, res) => {
   }
 });
 
-// TODAS AS OUTRAS ROTAS DE TURNOS MANTIDAS EXATAMENTE IGUAIS...
+// ✅ NOVA ROTA PARA BUSCAR RESERVAS POR TURNO
 router.get('/turno/:turnoId', authenticate, async (req, res) => {
   try {
     const { turnoId } = req.params;
@@ -991,6 +974,7 @@ router.get('/turno/:turnoId', authenticate, async (req, res) => {
   }
 });
 
+// ✅ NOVA ROTA PARA ESTATÍSTICAS DE TURNOS
 router.get('/turnos/estatisticas', authenticate, async (req, res) => {
   try {
     const hoje = new Date();
@@ -1038,6 +1022,7 @@ router.get('/turnos/estatisticas', authenticate, async (req, res) => {
   }
 });
 
+// ✅ NOVA ROTA DEBUG PARA TESTAR TURNOS
 router.get('/debug/turnos', authenticate, async (req, res) => {
   try {
     console.log('🔍 [DEBUG] Analisando sistema de turnos...');
@@ -1123,7 +1108,77 @@ router.get('/debug/turnos', authenticate, async (req, res) => {
   }
 });
 
-// HEALTH CHECK (MANTIDO)
+// ✅ ROTA ADICIONAL PARA TESTAR CRIAÇÃO DE TURNO
+router.post('/debug/criar-turno-teste', authenticate, async (req, res) => {
+  try {
+    console.log('🧪 [DEBUG] Criando reserva de teste para turno...');
+    
+    // ✅ BUSCAR DADOS DINÂMICOS PARA TESTE
+    const { periodNameMap, priceMap } = await buscarPeriodosDoMongo();
+    
+    // Detectar turno atual
+    const turnoAtual = detectarTurnoAtual(req.user);
+    
+    // Buscar quarto disponível
+    const room = await buscarQuartoDisponivel();
+    
+    // Criar reserva de teste
+    const agora = new Date();
+    const checkOut = new Date(agora.getTime() + 4 * 60 * 60 * 1000); // +4 horas
+    
+    const reservaTeste = new Reservation({
+      customerName: 'TESTE TURNO - ' + turnoAtual.turnoNome,
+      customerPhone: '(11) 99999-9999',
+      customerEmail: 'teste@turno.com',
+      roomId: room.id,
+      roomNumber: room.number,
+      checkIn: agora,
+      checkOut: checkOut,
+      periodType: '4h',
+      periodName: periodNameMap['4h'] || '4 HORAS', // ✅ USAR NOME DINÂMICO
+      basePrice: priceMap['4h'] || 55.00,           // ✅ USAR PREÇO DINÂMICO
+      totalPrice: priceMap['4h'] || 55.00,          // ✅ USAR PREÇO DINÂMICO
+      status: 'confirmed',
+      paymentMethod: 'cash',
+      paymentStatus: 'paid',
+      createdBy: req.user._id,
+      turnoInfo: turnoAtual
+    });
+    
+    const reservaSalva = await reservaTeste.save();
+    
+    console.log('✅ Reserva de teste criada:', reservaSalva.reservationNumber);
+    
+    res.json({
+      success: true,
+      message: 'Reserva de teste criada com sucesso',
+      data: {
+        reserva: {
+          number: reservaSalva.reservationNumber,
+          customer: reservaSalva.customerName,
+          turnoInfo: reservaSalva.turnoInfo,
+          valor: reservaSalva.totalPrice,
+          periodName: reservaSalva.periodName
+        },
+        turnoDetectado: turnoAtual,
+        dadosMongoUsados: {
+          nomePeriodo: periodNameMap['4h'],
+          precoPeriodo: priceMap['4h']
+        }
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Erro ao criar reserva de teste:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erro ao criar reserva de teste',
+      error: error.message
+    });
+  }
+});
+
+// ✅ HEALTH CHECK
 router.get('/health', (req, res) => {
   res.json({
     success: true,
@@ -1132,6 +1187,6 @@ router.get('/health', (req, res) => {
   });
 });
 
-console.log('✅ Rotas de reservas registradas com correção mínima para MongoDB');
+console.log('✅ Rotas de reservas registradas com sucesso');
 
 module.exports = router;
