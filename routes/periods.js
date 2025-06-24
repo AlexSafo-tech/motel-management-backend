@@ -1,569 +1,412 @@
-// routes/periods.js - ROTAS CRUD PARA GESTÃO DINÂMICA DE PERÍODOS
-
+// routes/periods.js - CRIAR ESTE ARQUIVO
 const express = require('express');
 const router = express.Router();
-const mongoose = require('mongoose');
-const Period = require('../models/Period');
-const { authenticate } = require('../middleware/auth');
+const { ObjectId } = require('mongodb');
 
-console.log('✅ Rotas de períodos carregadas');
+// Middleware para logs específicos de períodos
+router.use((req, res, next) => {
+  console.log(`⏰ [PERIODS] ${req.method} ${req.path} - ${new Date().toISOString()}`);
+  next();
+});
 
-// ✅ ROTA 1: LISTAR TODOS OS PERÍODOS
-router.get('/', authenticate, async (req, res) => {
+// ✅ 1. GET /api/periods - Buscar todos os períodos
+router.get('/', async (req, res) => {
   try {
-    console.log('📋 [GET] Listando períodos...');
+    console.log('📋 Buscando todos os períodos...');
     
-    const { ativo, categoria } = req.query;
+    // Acessar MongoDB através do app (será configurado no server.js)
+    const db = req.app.locals.db;
     
-    // Construir filtro dinâmico
-    const filtro = {};
-    if (ativo !== undefined) {
-      filtro.active = ativo === 'true';
-    }
-    if (categoria) {
-      filtro.category = categoria;
-    }
+    const periods = await db.collection('products').find({
+      active: true
+    }).sort({ order: 1 }).toArray();
     
-    const periodos = await Period.find(filtro).sort({ order: 1, periodName: 1 });
-    
-    console.log(`📋 Encontrados ${periodos.length} períodos`);
-    
-    // Calcular estatísticas
-    const estatisticas = {
-      total: periodos.length,
-      ativos: periodos.filter(p => p.active).length,
-      inativos: periodos.filter(p => !p.active).length,
-      porCategoria: {}
-    };
-    
-    // Agrupar por categoria
-    periodos.forEach(periodo => {
-      const cat = periodo.category || 'outros';
-      if (!estatisticas.porCategoria[cat]) {
-        estatisticas.porCategoria[cat] = 0;
-      }
-      estatisticas.porCategoria[cat]++;
-    });
+    console.log(`✅ ${periods.length} períodos encontrados`);
     
     res.json({
       success: true,
-      data: periodos,
-      estatisticas: estatisticas,
-      total: periodos.length
+      data: periods,
+      message: `${periods.length} períodos carregados`,
+      timestamp: new Date().toISOString()
     });
-    
   } catch (error) {
-    console.error('❌ Erro ao listar períodos:', error);
+    console.error('❌ Erro ao buscar períodos:', error);
     res.status(500).json({
       success: false,
-      message: 'Erro interno do servidor',
+      message: 'Erro ao buscar períodos',
       error: error.message
     });
   }
 });
 
-// ✅ ROTA 2: BUSCAR PERÍODO POR ID
-router.get('/:id', authenticate, async (req, res) => {
+// ✅ 2. GET /api/periods/available - Buscar períodos por data (hoje vs futuro)
+router.get('/available', async (req, res) => {
   try {
-    const { id } = req.params;
+    const { date, roomId } = req.query;
     
-    // Buscar por _id ou por periodType
-    let periodo;
-    if (mongoose.Types.ObjectId.isValid(id)) {
-      periodo = await Period.findById(id);
-    } else {
-      periodo = await Period.findOne({ periodType: id });
-    }
+    console.log(`📅 Buscando períodos para: ${date || 'hoje'}, quarto: ${roomId || 'qualquer'}`);
     
-    if (!periodo) {
-      return res.status(404).json({
-        success: false,
-        message: 'Período não encontrado'
-      });
-    }
+    const db = req.app.locals.db;
+    
+    // Determinar se é "hoje" ou "futuro"
+    const today = new Date().toISOString().split('T')[0];
+    const isToday = date === today || !date;
+    
+    console.log(`📊 Tipo de reserva: ${isToday ? 'HOJE' : 'FUTURO'}`);
+    
+    // Buscar períodos baseado no tipo de reserva
+    const availableForFilter = isToday ? 'today' : 'future';
+    
+    const periods = await db.collection('products').find({
+      active: true,
+      availableFor: availableForFilter
+    }).sort({ order: 1 }).toArray();
+    
+    console.log(`✅ ${periods.length} períodos disponíveis para ${isToday ? 'hoje' : 'data futura'}`);
+    console.log('📋 Períodos:', periods.map(p => p.periodName));
     
     res.json({
       success: true,
-      data: periodo
+      data: periods,
+      isToday,
+      availableFor: availableForFilter,
+      message: `${periods.length} períodos disponíveis`,
+      timestamp: new Date().toISOString()
     });
-    
   } catch (error) {
-    console.error('❌ Erro ao buscar período:', error);
+    console.error('❌ Erro ao buscar períodos disponíveis:', error);
     res.status(500).json({
       success: false,
-      message: 'Erro interno do servidor',
+      message: 'Erro ao buscar períodos disponíveis',
       error: error.message
     });
   }
 });
 
-// ✅ ROTA 3: CRIAR NOVO PERÍODO
-router.post('/', authenticate, async (req, res) => {
+// ✅ 3. POST /api/periods - Criar novo período
+router.post('/', async (req, res) => {
   try {
-    console.log('🆕 [POST] Criando novo período...');
+    const periodData = req.body;
     
-    const {
-      periodType,
-      periodName,
-      basePrice,
-      description,
-      category = 'hourly',
-      durationHours,
-      checkInTime,
-      checkOutTime,
-      active = true,
-      order = 0
-    } = req.body;
+    console.log('➕ Criando novo período:', periodData.periodName);
+    console.log('📦 Dados recebidos:', periodData);
     
-    // Validações básicas
-    if (!periodType || !periodName || !basePrice) {
-      return res.status(400).json({
-        success: false,
-        message: 'Campos obrigatórios: periodType, periodName, basePrice'
-      });
-    }
+    const db = req.app.locals.db;
     
     // Verificar se já existe
-    const existe = await Period.findOne({ periodType: periodType });
-    if (existe) {
-      return res.status(409).json({
-        success: false,
-        message: `Período '${periodType}' já existe`
-      });
-    }
+    const existing = await db.collection('products').findOne({
+      periodType: periodData.periodType
+    });
     
-    // Validação de preço
-    const preco = parseFloat(basePrice);
-    if (isNaN(preco) || preco < 0) {
+    if (existing) {
+      console.log(`⚠️ Período ${periodData.periodType} já existe`);
       return res.status(400).json({
         success: false,
-        message: 'Preço deve ser um número válido e não negativo'
+        message: `Período ${periodData.periodType} já existe`
       });
     }
     
-    // Dados do novo período
-    const dadosPeriodo = {
-      periodType: periodType.toLowerCase().trim(),
-      periodName: periodName.toUpperCase().trim(),
-      basePrice: preco,
-      description: description || `Período de ${periodName}`,
-      category: category,
-      active: active,
-      order: parseInt(order) || 0,
-      availableFor: ['all'],
-      isFixedPrice: true,
-      isFeedbackPeriod: true,
-      createdBy: req.user._id
+    // Criar período com dados completos
+    const newPeriod = {
+      ...periodData,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      active: periodData.active !== undefined ? periodData.active : true
     };
     
-    // Adicionar campos específicos por categoria
-    if (category === 'hourly' && durationHours) {
-      dadosPeriodo.durationHours = parseFloat(durationHours);
-    }
+    console.log('💾 Salvando período:', newPeriod);
     
-    if ((category === 'overnight' || category === 'daily') && checkInTime && checkOutTime) {
-      dadosPeriodo.checkInTime = checkInTime;
-      dadosPeriodo.checkOutTime = checkOutTime;
-    }
+    const result = await db.collection('products').insertOne(newPeriod);
     
-    console.log('💾 Dados do período a criar:', dadosPeriodo);
-    
-    // Criar e salvar
-    const periodo = new Period(dadosPeriodo);
-    const periodoSalvo = await periodo.save();
-    
-    console.log('✅ Período criado:', periodoSalvo.periodType);
+    console.log('✅ Período criado com ID:', result.insertedId);
     
     res.status(201).json({
       success: true,
-      message: 'Período criado com sucesso',
-      data: periodoSalvo
+      data: { _id: result.insertedId, ...newPeriod },
+      message: `Período ${periodData.periodName} criado com sucesso`,
+      timestamp: new Date().toISOString()
     });
-    
   } catch (error) {
     console.error('❌ Erro ao criar período:', error);
-    
-    if (error.code === 11000) {
-      return res.status(409).json({
-        success: false,
-        message: 'Período já existe'
-      });
-    }
-    
-    if (error.name === 'ValidationError') {
-      return res.status(400).json({
-        success: false,
-        message: 'Dados inválidos',
-        details: Object.values(error.errors).map(e => e.message)
-      });
-    }
-    
     res.status(500).json({
       success: false,
-      message: 'Erro interno do servidor',
+      message: 'Erro ao criar período',
       error: error.message
     });
   }
 });
 
-// ✅ ROTA 4: ATUALIZAR PERÍODO
-router.put('/:id', authenticate, async (req, res) => {
+// ✅ 4. PUT /api/periods/:id - Atualizar período
+router.put('/:id', async (req, res) => {
   try {
-    console.log('📝 [PUT] Atualizando período...');
-    
     const { id } = req.params;
-    const updateData = { ...req.body };
+    const updateData = req.body;
     
-    // Adicionar dados de auditoria
-    updateData.updatedBy = req.user._id;
-    updateData.updatedAt = new Date();
+    console.log(`📝 Atualizando período ${id}...`);
+    console.log('📦 Dados de atualização:', updateData);
     
-    // Processar campos específicos
-    if (updateData.basePrice) {
-      updateData.basePrice = parseFloat(updateData.basePrice);
-    }
+    const db = req.app.locals.db;
     
-    if (updateData.periodName) {
-      updateData.periodName = updateData.periodName.toUpperCase().trim();
-    }
+    const result = await db.collection('products').updateOne(
+      { _id: new ObjectId(id) },
+      { 
+        $set: { 
+          ...updateData, 
+          updatedAt: new Date() 
+        } 
+      }
+    );
     
-    if (updateData.periodType) {
-      updateData.periodType = updateData.periodType.toLowerCase().trim();
-    }
-    
-    // Buscar e atualizar
-    let periodo;
-    if (mongoose.Types.ObjectId.isValid(id)) {
-      periodo = await Period.findByIdAndUpdate(id, updateData, { 
-        new: true, 
-        runValidators: true 
-      });
-    } else {
-      periodo = await Period.findOneAndUpdate(
-        { periodType: id }, 
-        updateData, 
-        { new: true, runValidators: true }
-      );
-    }
-    
-    if (!periodo) {
+    if (result.matchedCount === 0) {
+      console.log(`❌ Período ${id} não encontrado`);
       return res.status(404).json({
         success: false,
         message: 'Período não encontrado'
       });
     }
     
-    console.log('✅ Período atualizado:', periodo.periodType);
+    console.log('✅ Período atualizado com sucesso');
     
     res.json({
       success: true,
       message: 'Período atualizado com sucesso',
-      data: periodo
+      modifiedCount: result.modifiedCount,
+      timestamp: new Date().toISOString()
     });
-    
   } catch (error) {
     console.error('❌ Erro ao atualizar período:', error);
-    
-    if (error.name === 'ValidationError') {
-      return res.status(400).json({
-        success: false,
-        message: 'Dados inválidos',
-        details: Object.values(error.errors).map(e => e.message)
-      });
-    }
-    
     res.status(500).json({
       success: false,
-      message: 'Erro interno do servidor',
+      message: 'Erro ao atualizar período',
       error: error.message
     });
   }
 });
 
-// ✅ ROTA 5: ATIVAR/DESATIVAR PERÍODO
-router.patch('/:id/toggle', authenticate, async (req, res) => {
+// ✅ 5. DELETE /api/periods/:id - Deletar período
+router.delete('/:id', async (req, res) => {
   try {
-    console.log('🔄 [PATCH] Alterando status do período...');
-    
     const { id } = req.params;
-    const { active } = req.body;
     
-    if (typeof active !== 'boolean') {
-      return res.status(400).json({
-        success: false,
-        message: 'Campo "active" deve ser boolean'
-      });
-    }
+    console.log(`🗑️ Deletando período ${id}...`);
     
-    let periodo;
-    if (mongoose.Types.ObjectId.isValid(id)) {
-      periodo = await Period.findByIdAndUpdate(
-        id, 
-        { 
-          active: active,
-          updatedBy: req.user._id,
-          updatedAt: new Date()
-        }, 
-        { new: true }
-      );
-    } else {
-      periodo = await Period.findOneAndUpdate(
-        { periodType: id }, 
-        { 
-          active: active,
-          updatedBy: req.user._id,
-          updatedAt: new Date()
-        }, 
-        { new: true }
-      );
-    }
+    const db = req.app.locals.db;
+    
+    // Buscar período antes de deletar para log
+    const periodo = await db.collection('products').findOne({
+      _id: new ObjectId(id)
+    });
     
     if (!periodo) {
+      console.log(`❌ Período ${id} não encontrado para deletar`);
       return res.status(404).json({
         success: false,
         message: 'Período não encontrado'
       });
     }
     
-    console.log(`✅ Período ${periodo.periodType} → ${active ? 'ATIVADO' : 'DESATIVADO'}`);
+    const result = await db.collection('products').deleteOne({
+      _id: new ObjectId(id)
+    });
+    
+    console.log(`✅ Período "${periodo.periodName}" deletado com sucesso`);
     
     res.json({
       success: true,
-      message: `Período ${active ? 'ativado' : 'desativado'} com sucesso`,
-      data: periodo
+      message: `Período "${periodo.periodName}" deletado com sucesso`,
+      deletedPeriod: periodo.periodName,
+      timestamp: new Date().toISOString()
     });
-    
-  } catch (error) {
-    console.error('❌ Erro ao alterar status:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Erro interno do servidor',
-      error: error.message
-    });
-  }
-});
-
-// ✅ ROTA 6: DELETAR PERÍODO
-router.delete('/:id', authenticate, async (req, res) => {
-  try {
-    console.log('🗑️ [DELETE] Deletando período...');
-    
-    const { id } = req.params;
-    
-    // Verificar se tem reservas usando este período
-    const Reservation = mongoose.model('Reservation');
-    let periodoType;
-    
-    // Primeiro, obter o periodType
-    let periodo;
-    if (mongoose.Types.ObjectId.isValid(id)) {
-      periodo = await Period.findById(id);
-    } else {
-      periodo = await Period.findOne({ periodType: id });
-      periodoType = id;
-    }
-    
-    if (!periodo) {
-      return res.status(404).json({
-        success: false,
-        message: 'Período não encontrado'
-      });
-    }
-    
-    periodoType = periodo.periodType;
-    
-    // Verificar se há reservas usando este período
-    const reservasComPeriodo = await Reservation.countDocuments({
-      periodType: periodoType
-    });
-    
-    if (reservasComPeriodo > 0) {
-      return res.status(409).json({
-        success: false,
-        message: `Não é possível deletar. Existem ${reservasComPeriodo} reservas usando este período.`,
-        details: {
-          reservasEncontradas: reservasComPeriodo,
-          sugestao: 'Desative o período ao invés de deletá-lo'
-        }
-      });
-    }
-    
-    // Deletar período
-    if (mongoose.Types.ObjectId.isValid(id)) {
-      await Period.findByIdAndDelete(id);
-    } else {
-      await Period.findOneAndDelete({ periodType: id });
-    }
-    
-    console.log('✅ Período deletado:', periodoType);
-    
-    res.json({
-      success: true,
-      message: 'Período deletado com sucesso'
-    });
-    
   } catch (error) {
     console.error('❌ Erro ao deletar período:', error);
     res.status(500).json({
       success: false,
-      message: 'Erro interno do servidor',
+      message: 'Erro ao deletar período',
       error: error.message
     });
   }
 });
 
-// ✅ ROTA 7: OBTER MAPEAMENTO COMPLETO (PARA FRONTEND)
-router.get('/mapeamento/completo', authenticate, async (req, res) => {
+// ✅ 6. PATCH /api/periods/:id/toggle - Ativar/Desativar período
+router.patch('/:id/toggle', async (req, res) => {
   try {
-    console.log('🗺️ [GET] Obtendo mapeamento completo...');
+    const { id } = req.params;
     
-    const mapeamento = await Period.obterMapeamentoCompleto();
+    console.log(`🔄 Alternando status do período ${id}...`);
     
-    res.json({
-      success: true,
-      data: mapeamento,
-      message: 'Mapeamento obtido com sucesso'
+    const db = req.app.locals.db;
+    
+    const period = await db.collection('products').findOne({
+      _id: new ObjectId(id)
     });
     
-  } catch (error) {
-    console.error('❌ Erro ao obter mapeamento:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Erro interno do servidor',
-      error: error.message
-    });
-  }
-});
-
-// ✅ ROTA 8: DEBUG COMPLETO
-router.get('/debug/completo', authenticate, async (req, res) => {
-  try {
-    console.log('🔍 [DEBUG] Análise completa dos períodos...');
-    
-    const debugInfo = await Period.debugPeriodos();
-    
-    // Verificar também integração com reservas
-    const Reservation = mongoose.model('Reservation');
-    const periodosUsadosEmReservas = await Reservation.distinct('periodType');
-    
-    // Verificar órfãos (períodos em reservas que não existem na tabela Period)
-    const todosOsTipos = debugInfo.todos ? debugInfo.todos.map(p => p.periodType) : [];
-    const orfaos = periodosUsadosEmReservas.filter(tipo => !todosOsTipos.includes(tipo));
-    
-    res.json({
-      success: true,
-      message: 'Debug completo dos períodos',
-      data: {
-        ...debugInfo,
-        integracaoReservas: {
-          periodosUsadosEmReservas: periodosUsadosEmReservas,
-          totalPeriodosEmUso: periodosUsadosEmReservas.length,
-          periodosOrfaos: orfaos,
-          temOrfaos: orfaos.length > 0
-        },
-        sistemaStatus: {
-          modeloPeriod: 'OK - Modelo carregado',
-          validacaoDinamica: 'OK - Implementada',
-          integracaoReservation: 'OK - Conectado',
-          mapeamentoCompleto: 'OK - Funcionando'
-        }
-      }
-    });
-    
-  } catch (error) {
-    console.error('❌ Erro no debug completo:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Erro no debug completo',
-      error: error.message
-    });
-  }
-});
-
-// ✅ ROTA 9: INICIALIZAR PERÍODOS PADRÃO
-router.post('/inicializar', authenticate, async (req, res) => {
-  try {
-    console.log('🚀 [POST] Inicializando períodos padrão...');
-    
-    const periodos = await Period.criarPeriodosPadrao();
-    
-    res.json({
-      success: true,
-      message: 'Períodos padrão inicializados com sucesso',
-      data: periodos,
-      total: periodos.length
-    });
-    
-  } catch (error) {
-    console.error('❌ Erro ao inicializar períodos:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Erro ao inicializar períodos padrão',
-      error: error.message
-    });
-  }
-});
-
-// ✅ ROTA 10: REORDENAR PERÍODOS
-router.patch('/reordenar', authenticate, async (req, res) => {
-  try {
-    console.log('🔢 [PATCH] Reordenando períodos...');
-    
-    const { ordenacao } = req.body; // Array de { periodType: string, order: number }
-    
-    if (!Array.isArray(ordenacao)) {
-      return res.status(400).json({
+    if (!period) {
+      console.log(`❌ Período ${id} não encontrado`);
+      return res.status(404).json({
         success: false,
-        message: 'Campo "ordenacao" deve ser um array'
+        message: 'Período não encontrado'
       });
     }
     
-    const atualizacoes = [];
+    const newStatus = !period.active;
     
-    for (const item of ordenacao) {
-      if (item.periodType && typeof item.order === 'number') {
-        const resultado = await Period.findOneAndUpdate(
-          { periodType: item.periodType },
-          { 
-            order: item.order,
-            updatedBy: req.user._id,
-            updatedAt: new Date()
-          },
-          { new: true }
-        );
-        
-        if (resultado) {
-          atualizacoes.push(resultado);
-          console.log(`✅ ${item.periodType} → ordem ${item.order}`);
-        }
+    await db.collection('products').updateOne(
+      { _id: new ObjectId(id) },
+      { 
+        $set: { 
+          active: newStatus,
+          updatedAt: new Date() 
+        } 
       }
-    }
+    );
+    
+    console.log(`✅ Período "${period.periodName}" ${newStatus ? 'ativado' : 'desativado'}`);
     
     res.json({
       success: true,
-      message: `${atualizacoes.length} períodos reordenados`,
-      data: atualizacoes
+      data: { 
+        _id: id,
+        periodName: period.periodName,
+        active: newStatus 
+      },
+      message: `Período "${period.periodName}" ${newStatus ? 'ativado' : 'desativado'} com sucesso`,
+      timestamp: new Date().toISOString()
     });
-    
   } catch (error) {
-    console.error('❌ Erro ao reordenar:', error);
+    console.error('❌ Erro ao alterar status do período:', error);
     res.status(500).json({
       success: false,
-      message: 'Erro interno do servidor',
+      message: 'Erro ao alterar status do período',
       error: error.message
     });
   }
 });
 
-// ✅ HEALTH CHECK
-router.get('/health', (req, res) => {
-  res.json({
-    success: true,
-    message: 'Rotas de períodos funcionando',
-    timestamp: new Date().toISOString()
-  });
+// ✅ 7. POST /api/periods/calculate-price - Calcular preço do período
+router.post('/calculate-price', async (req, res) => {
+  try {
+    const { periodType, checkIn, checkOut, roomId } = req.body;
+    
+    console.log(`💰 Calculando preço para período: ${periodType}`);
+    console.log('📋 Dados:', { periodType, checkIn, checkOut, roomId });
+    
+    const db = req.app.locals.db;
+    
+    // Buscar dados do período no banco
+    const periodo = await db.collection('products').findOne({
+      periodType: periodType,
+      active: true
+    });
+    
+    if (!periodo) {
+      console.log(`⚠️ Período ${periodType} não encontrado, usando preço padrão`);
+      return res.json({
+        success: true,
+        data: {
+          basePrice: 50.00,
+          totalPrice: 50.00,
+          periodType,
+          source: 'fallback',
+          warning: 'Período não encontrado, preço padrão aplicado'
+        },
+        message: 'Preço calculado (fallback)'
+      });
+    }
+    
+    let valorFinal = periodo.basePrice;
+    let calculoDetalhes = {
+      periodType,
+      basePrice: periodo.basePrice,
+      metodCalculo: 'preco_fixo',
+      periodData: periodo
+    };
+    
+    // Lógica especial para pernoite
+    if (periodType === 'pernoite') {
+      valorFinal = periodo.basePrice; // Sempre preço fixo
+      calculoDetalhes.metodCalculo = 'preco_fixo_pernoite';
+      calculoDetalhes.observacao = 'Preço fixo independente do horário de check-in';
+      console.log('🌙 Pernoite detectado - aplicando preço fixo');
+    }
+    
+    console.log(`✅ Preço calculado: R$ ${valorFinal.toFixed(2)}`);
+    
+    res.json({
+      success: true,
+      data: {
+        basePrice: valorFinal,
+        totalPrice: valorFinal,
+        periodType,
+        periodName: periodo.periodName,
+        calculoDetalhes,
+        source: 'database'
+      },
+      message: 'Preço calculado com sucesso',
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('❌ Erro ao calcular preço:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erro ao calcular preço',
+      error: error.message
+    });
+  }
 });
 
-console.log('✅ Rotas CRUD de períodos registradas com sucesso');
+// ✅ 8. GET /api/periods/stats - Estatísticas dos períodos
+router.get('/stats', async (req, res) => {
+  try {
+    console.log('📊 Gerando estatísticas dos períodos...');
+    
+    const db = req.app.locals.db;
+    
+    const totalPeriods = await db.collection('products').countDocuments();
+    const activePeriods = await db.collection('products').countDocuments({ active: true });
+    const todayPeriods = await db.collection('products').countDocuments({ 
+      active: true, 
+      availableFor: 'today' 
+    });
+    const futurePeriods = await db.collection('products').countDocuments({ 
+      active: true, 
+      availableFor: 'future' 
+    });
+    
+    const priceRange = await db.collection('products').aggregate([
+      { $match: { active: true } },
+      { $group: {
+        _id: null,
+        minPrice: { $min: '$basePrice' },
+        maxPrice: { $max: '$basePrice' },
+        avgPrice: { $avg: '$basePrice' }
+      }}
+    ]).toArray();
+    
+    const stats = {
+      total: totalPeriods,
+      active: activePeriods,
+      inactive: totalPeriods - activePeriods,
+      todayPeriods,
+      futurePeriods,
+      pricing: priceRange[0] || { minPrice: 0, maxPrice: 0, avgPrice: 0 }
+    };
+    
+    console.log('✅ Estatísticas geradas:', stats);
+    
+    res.json({
+      success: true,
+      data: stats,
+      message: 'Estatísticas dos períodos',
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('❌ Erro ao gerar estatísticas:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erro ao gerar estatísticas',
+      error: error.message
+    });
+  }
+});
 
 module.exports = router;
