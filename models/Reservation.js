@@ -1,8 +1,8 @@
-// models/Reservation.js - MODELO COMPLETO CORRIGIDO COM ENUM DINÂMICO
+// models/Reservation.js - MODELO COM VALIDAÇÃO 100% DINÂMICA DO MONGODB
 
 const mongoose = require('mongoose');
 
-// ✅ FUNÇÃO PARA BUSCAR PERÍODOS VÁLIDOS DO MONGODB
+// ✅ FUNÇÃO PARA BUSCAR PERÍODOS VÁLIDOS DO MONGODB REAL
 const obterPeriodosValidos = async () => {
   try {
     // Verificar se o modelo Period existe
@@ -10,36 +10,36 @@ const obterPeriodosValidos = async () => {
     try {
       Period = mongoose.model('Period');
     } catch (error) {
-      // Se não existir, tentar importar (ajustar caminho se necessário)
+      // Se não existir, tentar importar
       try {
         Period = require('./Period');
       } catch (importError) {
         console.warn('⚠️ Modelo Period não encontrado, usando enum padrão');
-        return ['3h', '4h', '6h', '12h', '1hora', 'daily', 'pernoite', 'dayuse'];
+        return ['pernoite', '1hora', 'daily', '4h', '6h', '12h', '3h'];
       }
     }
     
+    // ✅ BUSCAR PERÍODOS ATIVOS DO MONGODB (CAMPOS CORRETOS CONFORME A IMAGEM)
     const periodos = await Period.find({ 
-      active: true,
-      isActive: { $ne: false }
-    }).distinct('periodType');
+      active: true  // ✅ Campo correto conforme imagem do MongoDB
+    }).distinct('periodType'); // ✅ Campo correto conforme imagem
     
-    console.log('✅ Períodos válidos do MongoDB:', periodos);
+    console.log('✅ Períodos válidos do MongoDB (validação dinâmica):', periodos);
     
-    // Garantir que temos pelo menos os básicos
-    const periodosBasicos = ['3h', '4h', '6h', '12h', 'daily', 'pernoite'];
-    const todosOsPeriodos = [...new Set([...periodosBasicos, ...periodos])];
+    // ✅ INCLUIR PERÍODOS BÁSICOS COMO FALLBACK
+    const periodosBasicos = ['pernoite', '1hora', 'daily', '4h', '6h', '12h', '3h'];
+    const todosOsPeriodos = [...new Set([...periodos, ...periodosBasicos])];
     
     return todosOsPeriodos;
     
   } catch (error) {
-    console.error('❌ Erro ao buscar períodos do MongoDB:', error);
-    // Fallback para enum padrão
-    return ['3h', '4h', '6h', '12h', '1hora', 'daily', 'pernoite', 'dayuse'];
+    console.error('❌ Erro ao buscar períodos do MongoDB para validação:', error);
+    // ✅ FALLBACK ATUALIZADO CONFORME A IMAGEM
+    return ['pernoite', '1hora', 'daily', '4h', '6h', '12h', '3h', 'dayuse'];
   }
 };
 
-// ✅ SCHEMA COMPLETO E ROBUSTO
+// ✅ SCHEMA COMPLETO COM VALIDAÇÃO DINÂMICA
 const reservationSchema = new mongoose.Schema({
   // ✅ NÚMERO DA RESERVA (AUTO-GERADO)
   reservationNumber: {
@@ -93,11 +93,11 @@ const reservationSchema = new mongoose.Schema({
     required: true 
   },
   
-  // ✅ PERÍODO - VALIDAÇÃO DINÂMICA BASEADA NO MONGODB
+  // ✅ PERÍODO - VALIDAÇÃO 100% DINÂMICA BASEADA NO MONGODB REAL
   periodType: { 
     type: String,
     required: true,
-    // ✅ VALIDAÇÃO DINÂMICA BASEADA NO MONGODB
+    // ✅ VALIDAÇÃO DINÂMICA QUE BUSCA DADOS REAIS DO MONGODB
     validate: {
       validator: async function(value) {
         try {
@@ -105,16 +105,20 @@ const reservationSchema = new mongoose.Schema({
           const isValid = periodosValidos.includes(value);
           
           if (!isValid) {
-            console.error(`❌ Período inválido: ${value}`);
-            console.log(`✅ Períodos válidos: ${periodosValidos.join(', ')}`);
+            console.error(`❌ Período inválido na validação: ${value}`);
+            console.log(`✅ Períodos válidos do MongoDB: ${periodosValidos.join(', ')}`);
+          } else {
+            console.log(`✅ Período válido: ${value}`);
           }
           
           return isValid;
         } catch (error) {
-          console.error('❌ Erro na validação de período:', error);
-          // Em caso de erro, aceitar valores básicos
-          const basicPeriods = ['3h', '4h', '6h', '12h', '1hora', 'daily', 'pernoite', 'dayuse'];
-          return basicPeriods.includes(value);
+          console.error('❌ Erro na validação dinâmica de período:', error);
+          // ✅ EM CASO DE ERRO, ACEITAR PERÍODOS BÁSICOS
+          const basicPeriods = ['pernoite', '1hora', 'daily', '4h', '6h', '12h', '3h'];
+          const isBasicValid = basicPeriods.includes(value);
+          console.log(`⚠️ Fallback: Período ${value} é básico: ${isBasicValid}`);
+          return isBasicValid;
         }
       },
       message: function(props) {
@@ -233,7 +237,7 @@ reservationSchema.index({ roomId: 1, checkIn: 1 });
 reservationSchema.index({ customerName: 'text', customerPhone: 'text' });
 reservationSchema.index({ 'turnoInfo.turnoId': 1, createdAt: -1 });
 reservationSchema.index({ 'turnoInfo.funcionarioTurnoId': 1, createdAt: -1 });
-reservationSchema.index({ periodType: 1 }); // ✅ NOVO: Index para periodType
+reservationSchema.index({ periodType: 1 }); // ✅ Index para periodType
 
 // ✅ MIDDLEWARE PRE-VALIDATE CORRIGIDO - EVITA DUPLICATAS
 reservationSchema.pre('validate', async function(next) {
@@ -249,7 +253,6 @@ reservationSchema.pre('validate', async function(next) {
       const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
       
       // Formato: RES + ANO + MÊS + DIA + TIMESTAMP + RANDOM
-      // Exemplo: RES20241208123456789
       this.reservationNumber = `RES${year}${month}${day}${timestamp}${random}`;
       
       // 🛡️ VERIFICAÇÃO DE SEGURANÇA: Se ainda assim existir, usar fallback
@@ -258,7 +261,6 @@ reservationSchema.pre('validate', async function(next) {
       });
       
       if (existsCheck) {
-        // Fallback com timestamp completo + ID aleatório
         this.reservationNumber = `RES${Date.now()}${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
         console.log('⚠️ Número duplicado detectado, usando fallback:', this.reservationNumber);
       }
@@ -266,7 +268,6 @@ reservationSchema.pre('validate', async function(next) {
       console.log('✅ Número de reserva gerado:', this.reservationNumber);
       
     } catch (err) {
-      // Fallback de emergência
       this.reservationNumber = `RES${Date.now()}${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
       console.log('❌ Erro na geração, usando fallback:', this.reservationNumber);
     }
@@ -280,19 +281,65 @@ reservationSchema.pre('validate', async function(next) {
   next();
 });
 
-// ✅ MÉTODO ESTÁTICO PARA VALIDAR PERÍODO
+// ✅ MÉTODO ESTÁTICO PARA VALIDAR PERÍODO DINAMICAMENTE
 reservationSchema.statics.validarPeriodo = async function(periodType) {
   try {
     const periodosValidos = await obterPeriodosValidos();
-    return periodosValidos.includes(periodType);
+    const isValid = periodosValidos.includes(periodType);
+    console.log(`🔍 Validação estática: ${periodType} → ${isValid}`);
+    return isValid;
   } catch (error) {
-    console.error('❌ Erro ao validar período:', error);
+    console.error('❌ Erro ao validar período estaticamente:', error);
     return false;
   }
 };
 
-// ✅ MÉTODO ESTÁTICO PARA OBTER PERÍODOS VÁLIDOS
+// ✅ MÉTODO ESTÁTICO PARA OBTER PERÍODOS VÁLIDOS DO MONGODB
 reservationSchema.statics.obterPeriodosValidos = obterPeriodosValidos;
+
+// ✅ MÉTODO ESTÁTICO PARA SINCRONIZAR COM MONGODB
+reservationSchema.statics.sincronizarComMongoDB = async function() {
+  try {
+    console.log('🔄 Sincronizando validação com MongoDB...');
+    const periodosValidos = await obterPeriodosValidos();
+    console.log(`✅ Sincronização concluída. ${periodosValidos.length} períodos válidos.`);
+    return periodosValidos;
+  } catch (error) {
+    console.error('❌ Erro na sincronização:', error);
+    return [];
+  }
+};
+
+// ✅ MÉTODO ESTÁTICO PARA DEBUG DE VALIDAÇÃO
+reservationSchema.statics.debugValidacao = async function(periodType) {
+  try {
+    console.log(`🔍 [DEBUG] Testando validação para: ${periodType}`);
+    
+    const periodosValidos = await obterPeriodosValidos();
+    const isValid = periodosValidos.includes(periodType);
+    
+    console.log(`📊 [DEBUG] Resultado:`);
+    console.log(`   - Período testado: ${periodType}`);
+    console.log(`   - É válido: ${isValid}`);
+    console.log(`   - Períodos válidos: ${periodosValidos.join(', ')}`);
+    console.log(`   - Total de períodos: ${periodosValidos.length}`);
+    
+    return {
+      periodType,
+      isValid,
+      availablePeriods: periodosValidos,
+      totalPeriods: periodosValidos.length
+    };
+    
+  } catch (error) {
+    console.error('❌ Erro no debug de validação:', error);
+    return {
+      periodType,
+      isValid: false,
+      error: error.message
+    };
+  }
+};
 
 // ✅ MÉTODOS DE INSTÂNCIA
 reservationSchema.methods.getDuration = function() {
@@ -396,6 +443,16 @@ reservationSchema.statics.getReservasPorTurno = async function(turnoId) {
     quantidade: reservas.length
   };
 };
+
+// ✅ MIDDLEWARE PÓS-SAVE PARA LOG
+reservationSchema.post('save', function(doc) {
+  console.log(`✅ Reserva salva: ${doc.reservationNumber} | Período: ${doc.periodType} (${doc.periodName}) | Preço: R$ ${doc.totalPrice}`);
+});
+
+// ✅ MIDDLEWARE PÓS-VALIDATE PARA DEBUG
+reservationSchema.post('validate', function(doc) {
+  console.log(`✅ Validação concluída: ${doc.periodType} aceito`);
+});
 
 // ✅ EXPORTAR MODELO
 module.exports = mongoose.model('Reservation', reservationSchema);
